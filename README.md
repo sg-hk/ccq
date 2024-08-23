@@ -1,8 +1,8 @@
 # ccq
 ## (存储器 - **c**ún **c**hǔ **q**ì) is a minimalistic flashcard program in C
 #### Description
-/!\ very early stage work /!\
-As memory-light a vocabulary review app as I can come up with. ccq runs in the terminal, reads and writes to a simple text file, and uses an external algorithm to change an integer in the text. The ccq-mine fennel script is meant to be compiled to lua and used with mpv to populate ccq's database. Details below
+/!\ very early stage work /!\\
+As memory-light a vocabulary review app as I can come up with. ccq runs in the terminal, reads and writes to a simple text file, and uses an external algorithm to change just one field, the review date. The ccq-mine fennel script is meant to be compiled to lua and used with mpv to populate ccq's database. Details below
 
 #### Functionalities
 ccq:
@@ -10,7 +10,7 @@ ccq:
 - loads to memory the lines where the last integer (YYYYMMDD) =< today
 - selects at random one line with date =< today
 - <return> reveals the definition, and optionally other info
-- <p> and <f> let ccq know you Passed or Failed
+- \<p\> and \<f\> let ccq know you Passed or Failed
 - calls the fsrs algorithm when reviews end
 - overwrites the last integer
 
