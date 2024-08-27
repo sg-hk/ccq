@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
 		if (last_comma != NULL) {
 			char* date_str = last_comma + 1;
 			int date = atoi(date_str);
-			if (date >= today) {
+			if (date <= today) {
 				if (count >= capacity) {
 					capacity += 100;
 					matching_lines = realloc(matching_lines, capacity * sizeof(char*));
