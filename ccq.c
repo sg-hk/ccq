@@ -52,17 +52,33 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	
 	fclose(deck);
 
+	// review cards
 	if (count > 0) {
-		printf("Matching lines:\n");
+		printf("Today's reviews:\n");
 		for (int i = 0; i < count; i++) {
-			printf("%s\n", matching_lines[i]);
-			free(matching_lines[i]);
+			// parse second csv field as front of card
+			char* first_comma = strchr(matching_lines[i], ',');
+			char* second_comma = strchr(first_comma + 1, ',');
+			size_t length_word = second_comma - first_comma - 1;
+			char word[length_word + 1];
+			strncpy(word, first_comma + 1, length_word);
+			word[length_word] = '\0';
+			// parse third csv field as back of card
+			char* third_comma = strchr(second_comma + 1, ',');
+			size_t length_meaning = third_comma - second_comma - 1;
+			char meaning[length_meaning + 1];
+			strncpy(meaning, second_comma + 1, length_meaning);
+			meaning[length_meaning] = '\0';
+			// print results
+			printf(word);
+			printf(" has meaning ");
+			printf(meaning);
+			printf("\n");
 		}
 	} else {
-		printf("No line found with date >= today\n");
+		printf("No words to review.\n");
 	}
 	
 	free(matching_lines);
