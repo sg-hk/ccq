@@ -9,13 +9,12 @@ As memory-light a vocabulary review app as I can come up with. ccq runs in the t
 ccq:
 - reads a csv file where every word is one line
 - loads to memory the lines where the last integer (YYYYMMDD) <= today
-- selects at random one line with date <= today
-- \<return\> reveals the definition, and optionally other info
-- \<p\> and \<f\> let ccq know you Passed or Failed
-- calls the fsrs algorithm when reviews end
-- overwrites the last integer
+- parses the line's fields, and quizzes the user randomly *\[randomness to be implemented\]*
+- \<a\>gain, \<h\>ard, \<g\>ood, and \<e\>asy let ccq know your performance
+- calls the fsrs algorithm when reviews end *\[scheduler to be implemented\]*
+- overwrites the last integer *\[updating to be implemented\]*
 
-ccq-mine:
+ccq-mine: *\[all functionalities yet to be implemented\]*
 - adds vim-like bindings to mpv
 - directly searches subtitles in yomitan dictionaries
 - enables user to choose strings within the definitions

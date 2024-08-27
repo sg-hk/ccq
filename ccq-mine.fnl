@@ -39,7 +39,7 @@
   ;; word,reading,definition,sentence,path/to/audio
  )) 
 
-;; VISUAL LINE MODE <V>
+;; VISUAL LINE mode <V>
 ;; display subtitles as page
 ;; center current line; prev/next above/below
 ;; <t>/<s> to change to prev/next

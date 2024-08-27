@@ -3,7 +3,6 @@
 * Minimalistic flashcards in the terminal */
 
 #include "fsrs_scheduler.c"
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +36,7 @@ int main(int argc, char *argv[])
 	time_t t = time(NULL);
 	struct tm date = *localtime(&t);
 	int today = (date.tm_year + 1900) * 10000 + (date.tm_mon + 1) * 100 + date.tm_mday;
-	printf("%d\n", today);
+	printf("Reviews for today: %d\n", today);
 
 	// load deck
 	char path[128];
@@ -94,11 +93,18 @@ int main(int argc, char *argv[])
 			strncpy(word, first_comma + 1, length_word);
 			word[length_word] = '\0';
 
-			// parse third csv field as back of card
+			// parse third csv field as reading
 			char* third_comma = strchr(second_comma + 1, ',');
-			size_t length_meaning = third_comma - second_comma - 1;
+			size_t length_reading = third_comma - second_comma - 1;
+			char reading[length_reading + 1];
+			strncpy(reading, second_comma + 1, length_reading);
+			reading[length_reading] = '\0';
+
+			// parse fourth csv field as meaning
+			char* fourth_comma = strchr(third_comma + 1, ',');
+			size_t length_meaning = fourth_comma - third_comma - 1;
 			char meaning[length_meaning + 1];
-			strncpy(meaning, second_comma + 1, length_meaning);
+			strncpy(meaning, third_comma + 1, length_meaning);
 			meaning[length_meaning] = '\0';
 
 			// record user input for each card
@@ -107,7 +113,8 @@ int main(int argc, char *argv[])
 			while (1) {
 				review_input = get_keypress();
 				if (review_input == 'a' || review_input == 'h' || review_input == 'g' || review_input == 'e') {
-					printf("Card ID %s means %s\n\n", word_id, meaning);
+					printf("Card ID %s is read %s and means %s\n\n", word_id, reading, meaning);
+					// later include extra_definitions; audio; sentence audio; image
 					// store id and review in array and move to next line
 					reviews[i].card_id = atoi(word_id);
 					reviews[i].review_input = review_input;
