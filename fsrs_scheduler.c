@@ -27,6 +27,6 @@ void schedule_cards(CardReview reviews[], int count)
 	for (int i = 0; i < count; i++) {
 		// implement scheduler logic here
 		// and rewrite date integer in csv
-		printf("Scheduling card ID: %d with input: %c\n", reviews[i].card_id, reviews[i].review_input);
+		printf("Scheduling card ID:%d with input:%c\n", reviews[i].card_id, reviews[i].review_input);
 	}
 }

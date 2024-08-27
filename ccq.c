@@ -17,24 +17,17 @@
 
 int get_keypress(void) 
 {
-	// this function lets us record a single keypress
-	// without needing enter, and without echoing the keypress
+	// gets character without echoing it to the terminal
+	// and without requiring <Return>
 	// (thanks StackOverflow)
 	struct termios oldt, newt;
 	int ch;
-
-	// get old terminal's attributes
 	tcgetattr(STDIN_FILENO, &oldt);
 	newt = oldt;
-	// turn off canonical (requiring enter)
-	// and echo (showing user input)
-	newt.c_lflag &= ~(ICANON | ECHO);
+	newt.c_lflag &= ~(ICANON | ECHO); // new terminal flags
 	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-	// get the keypress
 	ch = getchar();
-	// set terminal back to old attributes 
-	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // switch back to old terminal
 	return ch;
 }
 
@@ -45,8 +38,6 @@ int main(int argc, char *argv[])
 	struct tm date = *localtime(&t);
 	int today = (date.tm_year + 1900) * 10000 + (date.tm_mon + 1) * 100 + date.tm_mday;
 	printf("%d\n", today);
-
-
 
 	// load deck
 	char path[128];
@@ -64,10 +55,11 @@ int main(int argc, char *argv[])
 	int count = 0;
 
 	while (fgets(line, sizeof(line), deck)) {
-		// parse last csv field as review date
-		line[strcspn(line, "\n")] = 0; // remove \n from string
+		line[strcspn(line, "\n")] = 0; // remove \n from line
 		char* last_comma = strrchr(line, ',');
 		if (last_comma != NULL) {
+			// parse last csv field as review date
+			// copy line to memory if date <= today
 			char* date_str = last_comma + 1;
 			int date = atoi(date_str);
 			if (date <= today) {
@@ -127,12 +119,12 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
+		schedule_cards(reviews, count);
 	} else {
 		printf("No words to review.\n");
 	}
 
 	free(matching_lines);
-	schedule_cards(reviews, count);
 
 	return 0;
 }
