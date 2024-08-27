@@ -2,6 +2,7 @@
 * Author: sg-hk
 * Minimalistic flashcards in the terminal */
 
+#include "fsrs_scheduler.c"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,8 @@ int main(int argc, char *argv[])
 	int today = (date.tm_year + 1900) * 10000 + (date.tm_mon + 1) * 100 + date.tm_mday;
 	printf("%d\n", today);
 
+
+
 	// load deck
 	char path[128];
 	snprintf(path, sizeof(path), "%s%s", getenv("HOME"), RELATIVE_PATH);
@@ -53,7 +56,6 @@ int main(int argc, char *argv[])
 		perror("Deck access error");
 		exit(EXIT_FAILURE);
 	}
-	rewind(deck);
 
 	// get due words
 	char line[MAX_LINE_LENGTH];
@@ -62,6 +64,7 @@ int main(int argc, char *argv[])
 	int count = 0;
 
 	while (fgets(line, sizeof(line), deck)) {
+		// parse last csv field as review date
 		line[strcspn(line, "\n")] = 0; // remove \n from string
 		char* last_comma = strrchr(line, ',');
 		if (last_comma != NULL) {
@@ -80,16 +83,25 @@ int main(int argc, char *argv[])
 	fclose(deck);
 
 	// review cards
-	if (count > 0) {
+	if (count > 0) {	
+		CardReview reviews[count];
 		printf("Press [a]gain, [h]ard, [g]ood, [e]asy:\n");
-		for (int i = 0; i < count; i++) {
-			// parse second csv field as front of card
+		int i = 0;
+		while (i < count) {
+			// parse first csv field as card id
 			char* first_comma = strchr(matching_lines[i], ',');
+			size_t id_length = first_comma - matching_lines[i];
+			char word_id[id_length + 1];
+			strncpy(word_id, matching_lines[i], id_length);
+			word_id[id_length] = '\0';
+
+			// parse second csv field as front of card
 			char* second_comma = strchr(first_comma + 1, ',');
 			size_t length_word = second_comma - first_comma - 1;
 			char word[length_word + 1];
 			strncpy(word, first_comma + 1, length_word);
 			word[length_word] = '\0';
+
 			// parse third csv field as back of card
 			char* third_comma = strchr(second_comma + 1, ',');
 			size_t length_meaning = third_comma - second_comma - 1;
@@ -99,16 +111,20 @@ int main(int argc, char *argv[])
 
 			// record user input for each card
 			printf("%s\n", word);
-			int review_input = get_keypress();
-
-			if (review_input == 'a' || review_input == 'h' || review_input == 'g' || review_input == 'e') {
-				printf("%s\n", meaning);
-			} else if (review_input == EOF) {
-				printf("EOF detected");
-			} else if (review_input == '\n') {
-				printf("New line detected\n");
-			} else {
-				printf("Unrecognized input\n");
+			int review_input;
+			while (1) {
+				review_input = get_keypress();
+				if (review_input == 'a' || review_input == 'h' || review_input == 'g' || review_input == 'e') {
+					printf("Card ID %s means %s\n\n", word_id, meaning);
+					// store id and review in array and move to next line
+					reviews[i].card_id = atoi(word_id);
+					reviews[i].review_input = review_input;
+					i++;
+					break;
+				} else {
+					// otherwise repeat
+					printf("Unrecognized input. Press [a], [h], [g] or [e]: ");
+				}
 			}
 		}
 	} else {
@@ -116,15 +132,7 @@ int main(int argc, char *argv[])
 	}
 
 	free(matching_lines);
+	schedule_cards(reviews, count);
 
 	return 0;
 }
-// later: calling fsrs
-// -> implement the basic algo with default params in C
-// -> then just modify python optimizer code to work with our file format
-// -> periodically call optimizer? or how best to use it?
-// later: rewrite according to line ID, close file
-// -> load csv to memory
-// -> find most efficient function to find line with first field matching
-// -> fprint_s() to change line
-// -> close
