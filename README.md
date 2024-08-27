@@ -9,7 +9,7 @@ As memory-light a vocabulary review app as I can come up with. ccq runs in the t
 ccq:
 - reads a csv file where every word is one line
 - loads to memory the lines where the last integer (YYYYMMDD) >= today
-- selects at random one line with date =< today
+- selects at random one line with date >= today
 - \<return\> reveals the definition, and optionally other info
 - \<p\> and \<f\> let ccq know you Passed or Failed
 - calls the fsrs algorithm when reviews end
