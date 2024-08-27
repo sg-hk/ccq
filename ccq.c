@@ -6,11 +6,36 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <time.h>
+#include <unistd.h>
 
 #define RELATIVE_PATH "/.local/share/ccq/deck"
 #define MAX_LINE_LENGTH 2048
 #define INITIAL_CAPACITY 100 
+
+int get_keypress(void) 
+{
+	// this function lets us record a single keypress
+	// without needing enter, and without echoing the keypress
+	// (thanks StackOverflow)
+	struct termios oldt, newt;
+	int ch;
+
+	// get old terminal's attributes
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	// turn off canonical (requiring enter)
+	// and echo (showing user input)
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	// get the keypress
+	ch = getchar();
+	// set terminal back to old attributes 
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+
+	return ch;
+}
 
 int main(int argc, char *argv[])
 {
@@ -56,7 +81,7 @@ int main(int argc, char *argv[])
 
 	// review cards
 	if (count > 0) {
-		printf("Today's reviews:\n");
+		printf("Press [a]gain, [h]ard, [g]ood, [e]asy:\n");
 		for (int i = 0; i < count; i++) {
 			// parse second csv field as front of card
 			char* first_comma = strchr(matching_lines[i], ',');
@@ -71,24 +96,29 @@ int main(int argc, char *argv[])
 			char meaning[length_meaning + 1];
 			strncpy(meaning, second_comma + 1, length_meaning);
 			meaning[length_meaning] = '\0';
-			// print results
-			printf(word);
-			printf(" has meaning ");
-			printf(meaning);
-			printf("\n");
+
+			// record user input for each card
+			printf("%s\n", word);
+			int review_input = get_keypress();
+
+			if (review_input == 'a' || review_input == 'h' || review_input == 'g' || review_input == 'e') {
+				printf("%s\n", meaning);
+			} else if (review_input == EOF) {
+				printf("EOF detected");
+			} else if (review_input == '\n') {
+				printf("New line detected\n");
+			} else {
+				printf("Unrecognized input\n");
+			}
 		}
 	} else {
 		printf("No words to review.\n");
 	}
-	
+
 	free(matching_lines);
 
 	return 0;
 }
-// later: print test field, wait for 1-4 keypress, print answer field
-// -> termios.h, remove ICONAN and ECHO flags (no EOF no print)
-// -> getchar
-// -> back to old terminal
 // later: calling fsrs
 // -> implement the basic algo with default params in C
 // -> then just modify python optimizer code to work with our file format
