@@ -1,6 +1,11 @@
-/* Program: ccq = 存储器
-* Author: sg-hk
-* Minimalistic flashcards in the terminal */
+/*	存储器 (ccq) by sg-hk
+
+	ccq does five things
+ 	1. collect due cards
+	2. parse due cards
+	3. review due cards
+	4. store review data
+	5. reschedule cards		*/
 
 #include <dirent.h>
 #include <locale.h>
@@ -25,9 +30,9 @@ typedef struct ParsedLine {
 	char* reading;
 	char* definition;
 	char* sentence;
-	char* sreading;
+	char* sreading; // sentence reading
 	char** audiofiles;
-	int fcount;
+	int fcount; // audio file count
 } ParsedLine;
 
 typedef struct LogData {
@@ -89,7 +94,6 @@ ParsedLine parse_line(char* line)
 
 	char* token = strtok(line, "|");
 	if (token != NULL) parsed_line.word = strdup(token);
-	printf("Debug: parsed_line.word assigned: '%s'\n", parsed_line.word);
 
 	token = strtok(NULL, "|");
 	if (token != NULL) parsed_line.reading = strdup(token);
@@ -104,9 +108,10 @@ ParsedLine parse_line(char* line)
 	if (token != NULL) parsed_line.sreading = strdup(token);
 
 	token = strtok(NULL, "|");
+	/* audio file list parsing */
 	if (token != NULL) {
 		int i = 0;
-		char** audiofiles = malloc(10 * sizeof(char*)); // Start with space for 10 paths
+		char** audiofiles = malloc(10 * sizeof(char*)); // space for 10 paths
 		int capacity = 10;
 
 		char* audiopaths = strtok(token, ";");
@@ -202,6 +207,33 @@ void log_reviews(LogData* logs, int count)
 	fclose(log);
 }
 
+void reschedule(LogData* logs, int count)
+{
+	int today = get_day();
+	int scheduled_date = 0;
+
+	char path[128];
+	snprintf(path, sizeof(path), "%s%s%s", getenv("HOME"), CCQ_PATH, "deck");
+	FILE* deck = fopen(path, "w");
+	if (deck == NULL) {
+		perror("Deck access error");
+		exit(EXIT_FAILURE);
+	}
+
+	/* very simple algorithm:
+	eventually this will be replaced with FSRS */
+	for (int i = 0; i < count; ++i) {
+		if logs[i].result == "f") scheduled_date = today + 1;
+		else scheduled_date = today + interval * 2
+	}
+
+	/* here reopen deck
+	find logs[i].word matching the strtoken(|,line) of each line of deck
+	and update the last field after | */
+
+	fclose(deck);
+}
+
 int main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "");
@@ -236,6 +268,8 @@ int main(int argc, char *argv[])
 	}
 
 	log_reviews(reviews_log, reviews.wcount);
+	reschedule(reviews_log);
+	free(reviews_log);
 	free(reviews.due);
 
 	return 0;
