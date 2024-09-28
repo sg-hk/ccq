@@ -1,4 +1,6 @@
 cJSON*
+.gitignore
 notes
 sample_deck.json
 testing
+testing_clang

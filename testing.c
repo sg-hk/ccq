@@ -3,17 +3,17 @@
 #include <string.h>
 #include "cJSON.h"
 
-#define CCQ_PATH "/.local/share/ccq"
+#define CCQ_PATH "/.local/share/ccq/"
 
 typedef struct Card {
-        const char *word;
-        const char *reading;
-        const char *definition;
-        const char **audiofiles;
-        const char **sentences;
+        char *word;
+        char *reading;
+        char *definition;
+        char **audiofiles;
+        char **sentences;
         int *dates;
         char **results;
-        float *times;
+        int *times; // in milliseconds
         int due_date;
 } Card;
 
@@ -32,7 +32,7 @@ char **parse_string_array
 (cJSON *json_array)
 {
 	int array_size = cJSON_GetArraySize(json_array);
-	char **string_array = malloc(sizeof(char *) * (array_size + 1));
+	char **string_array = malloc(sizeof(char *) * (array_size + 1)); // + 1 to null-terminate the array
 	if (!string_array) return NULL;
 
 	for (int i = 0; i < array_size; ++i) {
@@ -58,8 +58,29 @@ char **parse_string_array
 	return string_array;
 }
 
+int *parse_int_array
+(cJSON *json_array)
+{
+	int array_size = cJSON_GetArraySize(json_array);
+	int *int_array = malloc(sizeof(int) * array_size);
+	if (!int_array) return NULL;
+
+	for (int i = 0; i < array_size; ++i) {
+		cJSON *item = cJSON_GetArrayItem(json_array, i);
+		if (item && item->valueint) {
+			int_array[i] = item->valueint;
+		} else {
+			fprintf(stderr, "Json int array malformed\n");
+			free(int_array);
+			return NULL;
+		}
+	}
+
+	return int_array;
+}
+
 Card parse_card
-(const char *word, cJSON *raw_card) 
+(char *word, cJSON *raw_card) 
 {
 	Card parsed_card = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0};
 
@@ -76,10 +97,10 @@ Card parse_card
 	cJSON *times = cJSON_GetArrayItem(log, 2);
 	parsed_card.audiofiles = parse_string_array(audiofiles);
 	parsed_card.sentences = parse_string_array(sentences);
-	parsed_card.dates = parse_string_array(dates);
+	parsed_card.dates = parse_int_array(dates);
 	parsed_card.results = parse_string_array(results);
-	parsed_card.times = parse_string_array(times);
-	parsed_card.due_date = strdup(cJSON_GetArrayItem(log,3)->valueint);
+	parsed_card.times = parse_int_array(times);
+	parsed_card.due_date = cJSON_GetArrayItem(log,3)->valueint;
 
 	return parsed_card;
 }
@@ -105,7 +126,7 @@ void free_card
 	free(card->times);
 }
 
-char* readFileToString
+char* read_file_to_string
 (const char *filename) 
 {
     FILE *f = fopen(filename, "rb");
@@ -122,72 +143,81 @@ fclose(f);
     return buffer;
 }
 
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <deck_name>\n", argv[0]);
-        return 1;
-    }
+int main
+(int argc, char **argv)
+{
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <deck_name>\n", argv[0]);
+		exit(EXIT_FAILURE);
+	}
 
-    char filepath[1024];
-    snprintf(filepath, sizeof(filepath), "%s%s/%s%s", getenv("HOME"), CCQ_PATH, argv[1], ".json");
+	char filepath[256];
+	snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, argv[1], ".json");
 
-    char *jsonData = readFileToString(filepath);
-    if (!jsonData) {
-        fprintf(stderr, "Error reading file %s\n", filepath);
-        return 1;
-    }
+	char *json_data = read_file_to_string(filepath);
+	if (!json_data) {
+		fprintf(stderr, "Error reading file %s\n", filepath);
+		exit(EXIT_FAILURE);
+	} else {
+		printf("Successfully parsed file at %s\n", filepath);
+	}
 
-    cJSON *root = cJSON_Parse(jsonData);
-    if (!root) {
-        fprintf(stderr, "Error parsing JSON: %s\n", cJSON_GetErrorPtr());
-        free(jsonData);
-        return 1;
-    }
+	cJSON *root = cJSON_Parse(json_data);
+	if (!root) {
+		fprintf(stderr, "Error parsing JSON at: %s\n", cJSON_GetErrorPtr());
+		fprintf(stderr, "Please try validating the JSON through a linter\n");
+		exit(EXIT_FAILURE);
+	}
+	cJSON *example_deck = cJSON_GetObjectItemCaseSensitive(root, "example_deck");
+	if (!example_deck) {
+		fprintf(stderr, "Error accessing example_deck\n");
+		exit(EXIT_FAILURE);
+	}
 
-    cJSON *current_element = NULL;
-    cJSON_ArrayForEach(current_element, root) {
-        if (current_element->type == cJSON_Object) {
-            Card card = parse_card(current_element->string, current_element);
-            printf("Word: %s\n", card.word);
-            printf("Reading: %s\n", card.reading);
-            printf("Definition: %s\n", card.definition);
-            if (card.audiofiles) {
-                printf("Audiofiles:\n");
-                for (const char **audio = card.audiofiles; *audio; audio++) {
-                    printf("  %s\n", *audio);
-                }
-            }
-            if (card.sentences) {
-                printf("Sentences:\n");
-                for (const char **sentence = card.sentences; *sentence; sentence++) {
-                    printf("  %s\n", *sentence);
-                }
-            }
-            if (card.dates) {
-                printf("Review Dates:\n");
-                for (int *date = card.dates; *date; date++) {
-                    printf("  %d\n", *date);
-                }
-            }
-            if (card.results) {
-                printf("Review Results:\n");
-                for (char **result = card.results; *result; result++) {
-                    printf("  %s\n", *result);
-                }
-            }
-            if (card.times) {
-                printf("Review Times:\n");
-                for (int *time = card.times; *time; time++) {
-                    printf("  %d\n", *time);
-                }
-            }
-            printf("Due Date: %d\n", card.due_date);
+	cJSON *current_element = NULL;
+	cJSON_ArrayForEach(current_element, example_deck) {
+		if (current_element->type == cJSON_Object) {
+			Card card = parse_card(current_element->string, current_element);
+			printf("Word: %s\n", card.word);
+			printf("Reading: %s\n", card.reading);
+			printf("Definition: %s\n", card.definition);
+			if (card.audiofiles) {
+		                printf("Audiofiles:\n");
+		                for (char **audio = card.audiofiles; *audio; ++audio) {
+					printf("  %s\n", *audio);
+		                }
+	            	}
+	    		if (card.sentences) {
+	                	printf("Sentences:\n");
+	                	for (char **sentence = card.sentences; *sentence; ++sentence) {
+	                    		printf("  %s\n", *sentence);
+	                	}
+	            	}
+	    		if (card.dates) {
+	                	printf("Review Dates:\n");
+	                	for (int *date = card.dates; *date; ++date) {
+	                    		printf("  %d\n", *date);
+	                	}
+	            	}
+	    		if (card.results) {
+	                	printf("Review Results:\n");
+	                	for (char **result = card.results; *result; ++result) {
+	                    		printf("  %s\n", *result);
+	                	}
+	            	}
+	    		if (card.times) {
+	                	printf("Review Times:\n");
+	                	for (int *time = card.times; *time; ++time) {
+	                    	printf("  %d milliseconds\n", *time);
+	                	}
+	            	}
+	            	printf("Due Date: %d\n", card.due_date);
 
-            free_card(&card);
-        }
+		free_card(&card);
+        	}
     }
 
     cJSON_Delete(root);
-    free(jsonData);
+    free(json_data);
     return 0;
 }

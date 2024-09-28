@@ -95,7 +95,7 @@ Card parse_card(const char *word, cJSON *raw_card)
 	parsed_card.word = word;
 	parsed_card.reading = strdup(cJSON_GetArrayItem(back, 0)->valuestring);
 	parsed_card.definition = strdup(cJSON_GetArrayItem(back, 1)->valuestring);
-	parsed_card.due_date = due_date->valueint;
+	parsed_card.due_date = cJSONdue_date->valueint;
 	return parsed_card;
 }
 
