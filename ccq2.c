@@ -9,28 +9,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <termios.h>
 #include <time.h>
+#include <unistd.h>
 #include "cJSON.h"
 
 #define CCQ_PATH "/.local/share/ccq/"
 #define INITIAL_CAPACITY 128
 #define MAX_FIELD_LENGTH 512
-
-typedef struct Card {
-	// front of card
-        char *word;
-	// back of card
-        char *reading;
-        char *definition;
-        char **audiofiles;
-        char **sentences;
-	// log data
-        int *dates;
-        char **results;
-        int *times; // in ms, hence int not float
-        int due_date;
-} Card; 
 
 char *strdup
 (const char *s)  
@@ -62,7 +49,8 @@ char *read_file_to_string
 	fclose(f);
 	return buffer;
 }
-ar **parse_string_array 
+
+char **parse_string_array 
 (cJSON *json_array)
 {
         int array_size = cJSON_GetArraySize(json_array); 
@@ -113,81 +101,116 @@ int *parse_int_array
         return int_array; 
 }
 
-
-Card parse_card 
-(char *word, cJSON *raw_card)
-{
-        Card parsed_card = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0}; 
-
-        cJSON *back = cJSON_GetObjectItemCaseSensitive(raw_card, "back");
-        cJSON *log = cJSON_GetObjectItemCaseSensitive(raw_card, "log"); 
-
-        parsed_card.word = word;
-        parsed_card.reading = strdup(cJSON_GetArrayItem(back, 0)->valuestring); 
-        parsed_card.definition = strdup(cJSON_GetArrayItem(back, 1)->valuestring);
-        cJSON *audiofiles = cJSON_GetArrayItem(back, 2);
-        cJSON *sentences = cJSON_GetArrayItem(back, 3); 
-        cJSON *dates = cJSON_GetArrayItem(log, 0);
-        cJSON *results = cJSON_GetArrayItem(log, 1);
-        cJSON *times = cJSON_GetArrayItem(log, 2); 
-        parsed_card.audiofiles = parse_string_array(audiofiles);
-        parsed_card.sentences = parse_string_array(sentences);
-        parsed_card.dates = parse_int_array(dates); 
-        parsed_card.results = parse_string_array(results);
-        parsed_card.times = parse_int_array(times);
-        parsed_card.due_date = cJSON_GetArrayItem(log,3)->valueint; 
-
-        return parsed_card;
-} 
-
-void free_card
-(Card *card)  
-{
-        free(card->reading);
-        free(card->definition); 
-        for (int i = 0; card->audiofiles[i]; ++i) {
-                free(card->audiofiles[i]);
-        } 
-        free(card->audiofiles);
-        for (int i = 0; card->sentences[i]; ++i) {
-                free(card->sentences[i]); 
-        }
-        free(card->sentences);
-        free(card->dates); 
-        for (int i = 0; card->results[i]; ++i) {
-                free(card->results[i]);
-        } 
-        free(card->results);
-        free(card->times);
-} 
-
-time_t reschedule(char result, time_t old_due_date, time_t todays_date)
+int get_due_date(int result, int old_due_date, time_t today)
 {
 	/* one day is 86400 seconds */
-	time_t new_due_date = (result == 'p' && old_due_date != 0) ? // if passed & not new card
-    		todays_date + (todays_date - old_due_date) * 2 : // interval*2
-		todays_date + 86400; // otherwise reschedule to the next day
+	time_t new_due_date = (result == '\n' && old_due_date != 0) ? // if passed & not new card
+    		today + (today - old_due_date) * 2 : // set new date = old + interval*2
+		today + 86400; // otherwise reschedule to the next day
 	return new_due_date;
 }
 
-Card review_card(Card due_card, time_t todays_date)
+int get_keypress
+(void)
 {
-	Card updated_card = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
-
-	/*print and get key press*/
-	/*change log data*/
-	/*change due date*/
-
-	return updated_card;
+	struct termios oldt, newt;
+	int ch;
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	ch = getchar(); // get char in new terminal and switch back to old
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	return ch;
 }
 
-Card *update_deck(char *path)
+void reveal_card
+(cJSON *word)
 {
-	Card *updated_cards = NULL;
-	return updated_cards;
+	cJSON *audiofiles_json = cJSON_GetArrayItem(word,3);
+	cJSON *sentences_json = cJSON_GetArrayItem(word, 4);
+	int audiofile_count = cJSON_GetArraySize(audiofiles_json);
+	char **audiofiles = parse_string_array(audiofiles_json);
+	char **sentences = parse_string_array(sentences_json);
+
+	// play a random file from the array
+	char play_mpv[256];
+	srand(time(NULL));
+	int rdraw = (rand() % audiofile_count) - 1;
+	snprintf(play_mpv, sizeof(play_mpv), "mpv --really-quiet '%s' >/dev/null 2>&1 &", audiofiles[rdraw]);
+	system(play_mpv);
+
+	// show back of card
+	printf("Reading: %s\n", cJSON_GetArrayItem(word, 1)->valuestring);
+	printf("Definition: %s\n", cJSON_GetArrayItem(word, 2)->valuestring);
+	printf("Sentences:\n");
+	for (int i = 0; sentences[i] != NULL; ++i) {
+		printf("        %s\n", sentences[i]);
+	}
 }
 
-int main(int argc, char *argv[])
+void update_log
+(cJSON *log, int result, int time_taken, time_t today)
+{
+	cJSON *dates = cJSON_GetArrayItem(log, 0);
+	cJSON *results = cJSON_GetArrayItem(log, 1);
+	cJSON *times = cJSON_GetArrayItem(log, 2);
+
+	cJSON_AddItemToArray(dates, cJSON_CreateNumber(today));
+	cJSON_AddItemToArray(results, cJSON_CreateNumber(result)); // would making it a string be better?
+	cJSON_AddItemToArray(times, cJSON_CreateNumber(time_taken));
+	
+	int old_due_date = cJSON_GetArrayItem(log, 3)->valueint;
+	int new_due_date = get_due_date(result, old_due_date, today);
+	cJSON_ReplaceItemInArray(log, 3, cJSON_CreateNumber(new_due_date));
+}
+
+void review_card
+(cJSON *word, cJSON *log, time_t todays)
+{
+	int result;
+	clock_t start, end;
+	int time_taken;
+
+	printf("Reviewing [%s]...\n", cJSON_GetArrayItem(word, 0)->valuestring);
+	printf("Press Enter (pass) or F (fail)\n");
+
+	start = clock();
+
+	while (1) {
+		result = get_keypress();
+		if (result == '\n' || result == 'f') {
+			end = clock();
+			time_taken = (int)((double)(end - start) * 1000 / CLOCKS_PER_SEC); // in milliseconds
+			reveal_card(word);
+			update_log(log, result, time_taken, todays);
+			break;
+		} else {
+			printf("Input unrecognized. Please press Enter or F");
+		}
+	}
+}
+
+void write_file_from_string
+(const char *filepath, const char *updated_data)
+{
+	FILE *file = fopen(filepath, "w");
+	if (file == NULL) {
+        	perror("Failed to open file");
+        	exit(EXIT_FAILURE);
+    	}
+
+	if (fprintf(file, "%s", updated_data) < 0) {
+        	perror("Failed to write to file");
+        	fclose(file);
+        	exit(EXIT_FAILURE);
+    	}
+
+	fclose(file);
+}
+
+int main 
+(int argc, char **argv)
 {
 	if (argc != 2) {
                 fprintf(stderr, "Usage: %s <deck_name>\n", argv[0]);
@@ -223,20 +246,27 @@ int main(int argc, char *argv[])
         }
         printf("Successfully parsed JSON structure\n");
 
-	cJSON *current_element = NULL;
-	cJSON_ArrayForEach(current_element, example_deck) {
-		if (current_element->type == cJSON_Object) {
-			Card card = parse_card(current_element->string, current_element);
-			// compare due date to today
-			// review the card if so
-			// append log data to the Card struct
-			// reschedule the card
-			// write back into json deck file
-			free_card(&card);
+	time_t today = time(NULL);
+	cJSON *card = NULL;
+	cJSON_ArrayForEach(card, example_deck) {
+		if (card->type == cJSON_Object) {
+		        cJSON *word = cJSON_GetObjectItemCaseSensitive(card, "word"); 
+		        cJSON *log = cJSON_GetObjectItemCaseSensitive(card, "log"); 
+			int due_date = cJSON_GetArrayItem(log,3)->valueint; 
+			if (due_date < today) {
+				review_card(word, log, today);
+			}
 		}
 	}
+
+	printf("All cards reviewed!\n");
+	free(json_data);
+
+	printf("Updating %s...\n", argv[1]);
+	char *updated_json_data = cJSON_Print(root);
+	write_file_from_string(filepath, updated_json_data);
 	
 	cJSON_Delete(root);
-	free(json_data);
+	free(updated_json_data);
 	return 0;
 }
