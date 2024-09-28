@@ -53,7 +53,7 @@ char **parse_string_array
 		}
 	}
 
-	string_array[array_size] = NULL;
+	string_array[array_size] = NULL; // null-terminating array
 
 	return string_array;
 }
@@ -149,19 +149,21 @@ int main
 	if (argc != 2) {
 		fprintf(stderr, "Usage: %s <deck_name>\n", argv[0]);
 		exit(EXIT_FAILURE);
-	}
+	} else printf("Welcome to ccq! Today's study deck is \"%s\"\n", argv[1]);
 
 	char filepath[256];
 	snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, argv[1], ".json");
 
+	printf("Reading file at %s\n", filepath);
 	char *json_data = read_file_to_string(filepath);
 	if (!json_data) {
 		fprintf(stderr, "Error reading file %s\n", filepath);
 		exit(EXIT_FAILURE);
 	} else {
-		printf("Successfully parsed file at %s\n", filepath);
+		printf("Successfully read file\n");
 	}
 
+	printf("Parsing the JSON structure...\n");
 	cJSON *root = cJSON_Parse(json_data);
 	if (!root) {
 		fprintf(stderr, "Error parsing JSON at: %s\n", cJSON_GetErrorPtr());
@@ -173,6 +175,7 @@ int main
 		fprintf(stderr, "Error accessing example_deck\n");
 		exit(EXIT_FAILURE);
 	}
+	printf("Successfully parsed JSON structure\n");
 
 	cJSON *current_element = NULL;
 	cJSON_ArrayForEach(current_element, example_deck) {
