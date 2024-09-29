@@ -1,276 +1,329 @@
 /*	存储器 (ccq) by sg-hk
 
-	ccq does five things
- 	1. collect due cards
-	2. parse due cards
-	3. review due cards
-	4. store review data
-	5. reschedule cards		*/
+	ccq does four things
+	1. collect due cards
+	2. review due cards
+	3. store review data
+	4. reschedule cards		*/
 
-#include <dirent.h>
-#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include "cJSON.h"
 
-#define INITIAL_CAPACITY 100 
-#define MAX_LINE_LENGTH 2048
 #define CCQ_PATH "/.local/share/ccq/"
+#define INITIAL_CAPACITY 128
+#define MAX_FIELD_LENGTH 512
 
-typedef struct ReviewData {
-	char** due;
-	int wcount;
-} ReviewData;
-
-typedef struct ParsedLine {
-	char* word;
-	char* reading;
-	char* definition;
-	char* sentence;
-	char* sreading; // sentence reading
-	char** audiofiles;
-	int fcount; // audio file count
-} ParsedLine;
-
-typedef struct LogData {
-	char* word;
-	int date;
-	int result;
-	double time; // review time taken in seconds
-} LogData;
-
-int get_day(void)
+char *strdup
+(const char *s)  
 {
-	time_t t = time(NULL);
-	struct tm date = *localtime(&t);
-	int today = (date.tm_year + 1900) * 10000 + (date.tm_mon + 1) * 100 + date.tm_mday;
-	return today;
+    size_t size = strlen(s) + 1;
+    char *p = malloc(size);
+    if (p) {
+        memcpy(p, s, size);
+    }
+    return p;
 }
 
-ReviewData get_due(void)
+char *read_file_to_string
+(const char *filename)
 {
-	ReviewData reviews = {NULL, 0};
-	int today = get_day();
-
-	char path[128];
-	snprintf(path, sizeof(path), "%s%s%s", getenv("HOME"), CCQ_PATH, "deck");
-	FILE* deck = fopen(path, "r");
-	if (deck == NULL) {
-		perror("Deck access error");
-		exit(EXIT_FAILURE);
-	}
-
-	char line[MAX_LINE_LENGTH];
-	reviews.due = malloc(INITIAL_CAPACITY * sizeof(char *));
-	int capacity = INITIAL_CAPACITY;
-
-	while (fgets(line, sizeof(line), deck)) {
-		line[strcspn(line, "\n")] = 0;
-		char* last_pipe = strrchr(line, '|');
-		if (last_pipe != NULL) {
-			char* date_str = last_pipe + 1;
-			int date = atoi(date_str);
-			if (date <= today) {
-				if (reviews.wcount >= capacity) {
-					capacity += 100;
-					reviews.due = realloc(reviews.due, capacity * sizeof(char*));
-				}
-				reviews.due[reviews.wcount] = strdup(line);
-				++reviews.wcount;
-			}
-		}
-	}
-	fclose(deck);
-
-	return reviews;
+    FILE *f = fopen(filename, "rb");
+    if (f == NULL) {
+        perror("Deck access error");
+        exit(EXIT_FAILURE);
+    }
+    fseek(f, 0, SEEK_END);
+    long length = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buffer = (char *)malloc(length + 1);
+    if (buffer) {
+        fread(buffer, 1, length, f);
+        buffer[length] = '\0';
+    }
+    fclose(f);
+    return buffer;
 }
 
-ParsedLine parse_line(char* line) 
+char **parse_string_array 
+(cJSON *json_array)
 {
-	ParsedLine parsed_line = {NULL, NULL, NULL, NULL, NULL, NULL, 0};
+    int array_size = cJSON_GetArraySize(json_array);
+    char **string_array = malloc(sizeof(char *) * (array_size + 1)); // + 1 to null-terminate the array
+    if (!string_array) return NULL;
 
-	char* token = strtok(line, "|");
-	if (token != NULL) parsed_line.word = strdup(token);
+    for (int i = 0; i < array_size; ++i) {
+        cJSON *item = cJSON_GetArrayItem(json_array, i);
+        if (item && item->valuestring) {
+            string_array[i] = strdup(item->valuestring);
+            if (!string_array[i]) {
+                fprintf(stderr,"Json string array memory error\n");
+                for (int j = 0; j < i; ++j) {
+                    free(string_array[j]);
+                }
+                free(string_array);
+                return NULL;
+            }
+        } else {
+            fprintf(stderr, "Json string array malformed\n");
+            string_array[i] = NULL;
+        }
+    }
 
-	token = strtok(NULL, "|");
-	if (token != NULL) parsed_line.reading = strdup(token);
+    string_array[array_size] = NULL; // null-terminating array
 
-	token = strtok(NULL, "|");
-	if (token != NULL) parsed_line.definition = strdup(token);
-
-	token = strtok(NULL, "|");
-	if (token != NULL) parsed_line.sentence = strdup(token);
-
-	token = strtok(NULL, "|");
-	if (token != NULL) parsed_line.sreading = strdup(token);
-
-	token = strtok(NULL, "|");
-	/* audio file list parsing */
-	if (token != NULL) {
-		int i = 0;
-		char** audiofiles = malloc(10 * sizeof(char*)); // space for 10 paths
-		int capacity = 10;
-
-		char* audiopaths = strtok(token, ";");
-		if (audiopaths == NULL) parsed_line.audiofiles[0] = strdup(token);
-		while (audiopaths != NULL) {
-			if (i >= capacity) {
-				capacity += 10;
-				audiofiles = realloc(audiofiles, capacity * sizeof(char*));
-			}
-			char path[128];
-			snprintf(path, sizeof(path), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "audio/", audiopaths);
-			audiofiles[i] = strdup(path);
-			++i;
-			audiopaths = strtok(NULL, ";");
-		}
-		parsed_line.audiofiles = audiofiles;
-		parsed_line.fcount = i;
-	}
-
-	return parsed_line;
+    return string_array;
 }
 
-int get_keypress(void) 
+int *parse_int_array 
+(cJSON *json_array)
+{
+    int array_size = cJSON_GetArraySize(json_array);
+    int *int_array = malloc(sizeof(int) * array_size);
+    if (!int_array) return NULL;
+
+    for (int i = 0; i < array_size; ++i) {
+        cJSON *item = cJSON_GetArrayItem(json_array, i);
+        if (item && item->valueint) {
+            int_array[i] = item->valueint;
+        } else {
+            fprintf(stderr, "Json int array malformed\n");
+            free(int_array);
+            return NULL;
+        }
+    }
+
+    return int_array;
+}
+
+time_t get_due_date(int result, time_t old_due_date, time_t today)
+{
+	/* one day is 86400 seconds */
+	time_t new_due_date = (result == '\n' && old_due_date != 0) ? // if passed & not new card
+        today + (today - old_due_date) * 2 : // set new date = old + interval*2
+        today + 86400; // otherwise reschedule to the next day
+	return new_due_date;
+}
+
+int get_keypress
+(void)
 {
 	struct termios oldt, newt;
 	int ch;
 	tcgetattr(STDIN_FILENO, &oldt);
 	newt = oldt;
-	newt.c_lflag &= ~(ICANON | ECHO); // new terminal flags
+	newt.c_lflag &= ~(ICANON | ECHO);
 	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-	ch = getchar();
-	tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // switch back to old terminal
+	ch = getchar(); // get char in new terminal and switch back to old
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 	return ch;
 }
 
-int review_line(ParsedLine parsed_line)
+void play_audiofile
+(char *audiofile)
 {
-	printf("【%s】的意思是...\n", parsed_line.word);
+    // execlp() and not system() because safer
+    pid_t pid = fork();
+    if (pid == 0) {
+        execlp("mpv", "mpv", "--really-quiet", audiofile, "2>&1");
+        perror("Failed to execute mpv");
+        return;
+    }
+    else perror("Failed to fork");
+}
+
+void render_imagefile
+(char *imagefile)
+{
+    // system() and not execlp() because sixel needs a separate shell
+    char command[128];
+    snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-", imagefile);
+    system(command);
+}
+
+void reveal_card
+(cJSON *data, cJSON *files)
+{
+    // show card (text) data
+    int n_data_fields = cJSON_GetArraySize(data);
+    for (int i = 0; i < n_data_fields; ++i) {
+        cJSON* field = cJSON_GetArrayItem(data, i);
+        if (cJSON_IsArray(field)) {
+            int n_subfields = cJSON_GetArraySize(field);
+            for (int j = 0; j < n_subfields; ++j) {
+                cJSON* subfield = cJSON_GetArrayItem(field, j);
+                if (!cJSON_IsString(subfield)) {
+                    printf("Error: subfield isn't string value");
+                    return;
+                }
+                printf("%s\n", subfield->valuestring);
+            }
+        } else {
+            if (!cJSON_IsString(field)) {
+                printf("Error: field isn't string value");
+                return;
+            }
+            printf("%s\n", field->valuestring);
+        }
+    }
+
+    // play/render files
+    cJSON *audiofiles_json = cJSON_GetArrayItem(files,0);
+    cJSON *imagefiles_json = cJSON_GetArrayItem(files,1);
+    if (audiofiles_json) {
+        char **audiofiles = parse_string_array(audiofiles_json);
+        int audiofile_count = cJSON_GetArraySize(audiofiles_json);
+        srand(time(NULL));
+        int rdraw = (rand() % audiofile_count - 1);
+        play_audiofile(audiofiles[rdraw]);
+    }
+    if (imagefiles_json) {
+        char **imagefiles = parse_string_array(imagefiles_json);
+        int imagefile_count = cJSON_GetArraySize(imagefiles_json);
+        srand(time(NULL));
+        int rdraw = (rand() % imagefile_count - 1);
+        render_imagefile(imagefiles[rdraw]);
+    }
+}
+
+void update_log
+(cJSON *log, int result, int time_taken, time_t today)
+{
+	cJSON *dates = cJSON_GetArrayItem(log, 0);
+	cJSON *results = cJSON_GetArrayItem(log, 1);
+	cJSON *times = cJSON_GetArrayItem(log, 2);
+
+	cJSON_AddItemToArray(dates, cJSON_CreateNumber(today));
+	cJSON_AddItemToArray(results, cJSON_CreateString(result == '\n' ? "pass" : "fail"));
+	cJSON_AddItemToArray(times, cJSON_CreateNumber(time_taken));
+	
+	time_t old_due_date = (time_t)cJSON_GetArrayItem(log, 3)->valueint;
+	time_t new_due_date = get_due_date(result, old_due_date, today);
+	cJSON_ReplaceItemInArray(log, 3, cJSON_CreateNumber(new_due_date));
+}
+
+void review_card
+(cJSON *data, cJSON *log, cJSON *files, time_t today)
+{
 	int result;
+	struct timeval start, end;
+	int time_taken;
+
+	printf("Reviewing [%s]...\n", cJSON_GetArrayItem(data, 0)->valuestring);
+	printf("Press Enter (pass) or f (fail)\n");
+
+	gettimeofday(&start, NULL);
+
 	while (1) {
 		result = get_keypress();
-		if (result == 't' || result == 'w') {
-			printf("拼音：\t\t%s\n", parsed_line.reading);
-			printf("意义：\t\t%s\n", parsed_line.definition);
-			if (parsed_line.sentence != NULL) printf("例句：\t\t %s\n", parsed_line.sentence);
-			if (parsed_line.sreading != NULL) printf("例句的拼音：\t%s\n", parsed_line.sreading);
-			// randomly play from audio database
-			if (parsed_line.fcount > 1) {
-				char command[256];
-				srand(time(NULL));
-				int rdraw = (rand() % parsed_line.fcount) - 1;
-				snprintf(command, sizeof(command), "mpv --really-quiet '%s' >/dev/null 2>&1 &", parsed_line.audiofiles[rdraw]);
-				system(command);
-			} else if (parsed_line.fcount == 1) {
-				char command[256];
-				snprintf(command, sizeof(command), "mpv --really-quiet '%s' >/dev/null 2>&1 &", parsed_line.audiofiles[0]);
-				system(command);
-			}
-			for (int i = 0; i < parsed_line.fcount; ++i) {
-				free(parsed_line.audiofiles[i]);
-			}
-			free(parsed_line.audiofiles);
+		if (result == '\n' || result == 'f' || result == 'F') {
+			gettimeofday(&end, NULL);
+			time_taken = (int)((end.tv_sec - start.tv_sec) * 1000 + (end.tv_usec - start.tv_usec) / 1000);
+			reveal_card(data, files);
+			update_log(log, result, time_taken, today);
 			break;
 		} else {
-			printf("无法识别的输入。\n");
+			printf("Input unrecognized. Please press Enter or F\n");
 		}
 	}
-	free(parsed_line.word);
-	free(parsed_line.reading);
-	free(parsed_line.definition);
-	free(parsed_line.sentence);
-	free(parsed_line.sreading);
-
-	return result;
 }
 
-void log_reviews(LogData* logs, int count)
+void write_file_from_string
+(const char *filepath, const char *updated_data)
 {
-	char path[128];
+	FILE *file = fopen(filepath, "w");
+	if (file == NULL) {
+        perror("Failed to open file");
+        exit(EXIT_FAILURE);
+    }
 
-	snprintf(path, sizeof(path), "%s%s%s", getenv("HOME"), CCQ_PATH, "log");
-	FILE* log = fopen(path, "a");
-	if (log == NULL) {
-		perror("Log access error");
-		exit(EXIT_FAILURE);
-	}
+	if (fprintf(file, "%s", updated_data) < 0) {
+        perror("Failed to write to file");
+        fclose(file);
+        exit(EXIT_FAILURE);
+    }
 
-	for (int i = 0; i < count; ++i) {
-		printf("Debug: About to log: '%s'\n", logs[i].word);
-		fprintf(log, "%s|%d|%d|%0.2lf\n", logs[i].word, logs[i].date, logs[i].result, logs[i].time);
-	}
-
-	fclose(log);
+	fclose(file);
 }
 
-void reschedule(LogData* logs, int count)
+int main 
+(int argc, char **argv)
 {
-	int today = get_day();
-	int scheduled_date = 0;
+	printf("Welcome to ccq v0.02 - a minimalistic flash card program in C\n");
 
-	char path[128];
-	snprintf(path, sizeof(path), "%s%s%s", getenv("HOME"), CCQ_PATH, "deck");
-	FILE* deck = fopen(path, "w");
-	if (deck == NULL) {
-		perror("Deck access error");
-		exit(EXIT_FAILURE);
-	}
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("HOME"), CCQ_PATH, "master.json");
 
-	/* very simple algorithm:
-	eventually this will be replaced with FSRS */
-	for (int i = 0; i < count; ++i) {
-		if logs[i].result == "f") scheduled_date = today + 1;
-		else scheduled_date = today + interval * 2
-	}
+    printf("Accessing master deck at %s...\n", filepath);
+    char *json_data = read_file_to_string(filepath);
+    if (!json_data) {
+        fprintf(stderr, "Error reading file\n");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("Successfully read file\n");
+    }
 
-	/* here reopen deck
-	find logs[i].word matching the strtoken(|,line) of each line of deck
-	and update the last field after | */
+    printf("\nParsing master deck's json structure...\n");
+    cJSON *root = cJSON_Parse(json_data);
+    if (!root) {
+        fprintf(stderr, "Error parsing JSON at: %s\n", cJSON_GetErrorPtr());
+        fprintf(stderr, "Please try validating the JSON through an appropriate tool\n");
+        exit(EXIT_FAILURE);
+    }
+    printf("Successfully parsed structure\n\n");
+    free(json_data);
 
-	fclose(deck);
-}
+	printf("Please input the deck you would like to study:\n");
+    cJSON *sub_decks = NULL;
+    cJSON_ArrayForEach(sub_decks, root) {
+        printf(" - %s\n", sub_decks->string);
+    }
+	char study_deck[64];
+	fgets(study_deck, sizeof(study_deck), stdin);
+	study_deck[strcspn(study_deck, "\n")] = '\0'; // removing newline character
+	
+    cJSON *sub_deck = cJSON_GetObjectItemCaseSensitive(root, study_deck);
+    if (!sub_deck) {
+        fprintf(stderr, "Error accessing %s\n", study_deck);
+        exit(EXIT_FAILURE);
+    } else printf("Today's study deck is %s\n", study_deck);
 
-int main(int argc, char *argv[])
-{
-	setlocale(LC_ALL, "");
-	ReviewData reviews = get_due();
-	LogData reviews_log[reviews.wcount];
+
+	time_t today = time(NULL);
 	int i = 0;
+	cJSON *card = NULL;
+	cJSON_ArrayForEach(card, sub_deck) {
+        ++i;
+		if (card->type == cJSON_Object) {
+            cJSON *data = cJSON_GetObjectItemCaseSensitive(card, "card");
+			if (!data) printf("The %d-th card has a malformed 'data' array\n", i);
+            cJSON *log = cJSON_GetObjectItemCaseSensitive(card, "log");
+			if (!log) printf("The %d-th card has a malformed 'log' array\n", i);
+            cJSON *files = cJSON_GetObjectItemCaseSensitive(card, "files");
+			if (!files) printf("The %d-th card has a malformed 'files' array\n", i);
 
-	if (reviews.wcount == 0) {
-		printf("No reviews scheduled today\n");
-		return 0;
-	} else {
-		printf("今天有%d个单词要学习。准备好了吗？\n", reviews.wcount);
-		printf("按 [t]（通过）或 [w]（未通过）\n");
+			int due_date = cJSON_GetArrayItem(log,3)->valueint; 
+			if (due_date < today) {
+				review_card(data, log, files, today);
+			}
+		}
+		else printf("The %d-th card is malformed\n", i);
 	}
 
-	while (i < reviews.wcount) {
-		LogData review_log = {NULL, 0, 0, 0.0};
-		struct timespec start, end;
+	printf("All cards reviewed!\n");
+	free(json_data);
 
-		ParsedLine parsed_line = parse_line(reviews.due[i]);
-		printf("Debug: Before assigning to review_log.word: '%s'\n", parsed_line.word);
-		review_log.word = parsed_line.word;
-		printf("Debug: After assigning to review_log.word: '%s'\n", review_log.word);
-		review_log.date = get_day();
-		clock_gettime(CLOCK_MONOTONIC, &start);
-		review_log.result = review_line(parsed_line);
-		clock_gettime(CLOCK_MONOTONIC, &end);
-		review_log.time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-		reviews_log[i] = review_log;
-		free(reviews.due[i]);
-		++i;
-	}
-
-	log_reviews(reviews_log, reviews.wcount);
-	reschedule(reviews_log);
-	free(reviews_log);
-	free(reviews.due);
-
+	printf("Updating %s...\n", argv[1]);
+	char *updated_json_data = cJSON_Print(root);
+	write_file_from_string(filepath, updated_json_data);
+	
+	cJSON_Delete(root);
+	free(updated_json_data);
 	return 0;
 }
