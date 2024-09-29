@@ -132,7 +132,7 @@ void play_audiofile
     pid_t pid = fork();
     if (pid == 0) {
         char filepath[128];
-        snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "media", audiofile);
+        snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "media/", audiofile);
         execlp("mpv", "mpv", "--really-quiet", filepath, "2>&1");
         perror("Failed to execute mpv");
         return;
