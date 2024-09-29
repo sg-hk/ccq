@@ -317,13 +317,13 @@ int main
 	}
 
 	printf("All cards reviewed!\n");
-	free(json_data);
 
-	printf("Updating %s...\n", argv[1]);
+	printf("Updating %s...\n", study_deck);
 	char *updated_json_data = cJSON_Print(root);
 	write_file_from_string(filepath, updated_json_data);
 	
 	cJSON_Delete(root);
 	free(updated_json_data);
+
 	return 0;
 }
