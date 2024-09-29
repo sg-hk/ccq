@@ -4,8 +4,9 @@
 	1. collect due cards
 	2. review due cards
 	3. store review data
-	4. reschedule cards		*/
+	4. reschedule cards	*/
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +18,6 @@
 #include "cJSON.h"
 
 #define CCQ_PATH "/.local/share/ccq/"
-#define INITIAL_CAPACITY 128
-#define MAX_FIELD_LENGTH 512
 
 char *strdup
 (const char *s)  
@@ -102,7 +101,8 @@ int *parse_int_array
     return int_array;
 }
 
-time_t get_due_date(int result, time_t old_due_date, time_t today)
+time_t get_due_date
+(int result, time_t old_due_date, time_t today)
 {
 	/* one day is 86400 seconds */
 	time_t new_due_date = (result == '\n' && old_due_date != 0) ? // if passed & not new card
@@ -131,20 +131,52 @@ void play_audiofile
     // execlp() and not system() because safer
     pid_t pid = fork();
     if (pid == 0) {
-        execlp("mpv", "mpv", "--really-quiet", audiofile, "2>&1");
+        char filepath[128];
+        snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "media", audiofile);
+        execlp("mpv", "mpv", "--really-quiet", filepath, "2>&1");
         perror("Failed to execute mpv");
         return;
+    } else perror("Failed to fork");
+}
+
+char *sanitize
+(char *input)
+{
+    /* malloc needs to be used so that memory is allocated on the heap
+     * stack memory sanitized[128] doesn't persist beyond function */
+    char *sanitized = malloc(128);
+    if (!sanitized) {
+        perror("Failed to allocate memory for sanitizing");
+        return NULL;
     }
-    else perror("Failed to fork");
+    int j = 0;
+
+    for (int i = 0; input[i] != '\0' && j < 127; ++i) {
+        if (isalnum(input[i] || input[i] == '.' || input[i] == '/' || input[i] == '_')) {
+            sanitized[++j] = input[i];
+        } else {
+            printf("Image file path %s has dangerous characters\n", input);
+            printf("File skipped...\n");
+            return NULL;
+        }
+    }
+    sanitized[j] = '\0';
+    return sanitized;
 }
 
 void render_imagefile
 (char *imagefile)
 {
     // system() and not execlp() because sixel needs a separate shell
-    char command[128];
-    snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-", imagefile);
-    system(command);
+    // steps are taken to prevent shell injections
+    imagefile = sanitize(imagefile);
+    if (imagefile) {
+        char filepath[128];
+        snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "media/", imagefile);
+        char command[256];
+        snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-", imagefile);
+        system(command);
+    }
 }
 
 void reveal_card
@@ -182,6 +214,11 @@ void reveal_card
         srand(time(NULL));
         int rdraw = (rand() % audiofile_count - 1);
         play_audiofile(audiofiles[rdraw]);
+
+        for (int i = 0; i < audiofile_count; ++i) {
+            free(audiofiles[i]);
+        }
+        free(audiofiles);
     }
     if (imagefiles_json) {
         char **imagefiles = parse_string_array(imagefiles_json);
@@ -189,6 +226,11 @@ void reveal_card
         srand(time(NULL));
         int rdraw = (rand() % imagefile_count - 1);
         render_imagefile(imagefiles[rdraw]);
+
+        for (int i = 0; i < imagefile_count; ++i) {
+            free(imagefiles[i]);
+        }
+        free(imagefiles);
     }
 }
 
