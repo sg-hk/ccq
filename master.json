@@ -6,7 +6,7 @@
 		}, {
 			"data":	["hanzi2", "reading_w2", "definition_w2", ["audiofile1_w2", "audiofile2_w2"], ["sentence1_w2", "sentence2_w2"]],
 			"log":	[[12345, 23456, 34567], ["pass", "fail", "pass"], [1000, 1250, 15000], 123456],
-			"files": [],
+			"files": []
 		}],
 	"class":	[{
 			"data": ["capital of Canada", "Ottawa"],
