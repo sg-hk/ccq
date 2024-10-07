@@ -15,6 +15,8 @@ the dictionary utility does the following
 the command line nature of the tool allows for easy piping and integration in a language learning workflow
 
 to do:
-- card creation utility
-- add -h flag and/or man page
+- card creation
+- flash card deck browser
+- man page
+- Makefile with the necessary files and compilation args
 - fsrs scheduler

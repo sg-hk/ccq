@@ -115,7 +115,6 @@ void binary_search
 int main
 (int argc, char **argv)
 {
-    char search_string[MAX_SMALL];
     char dic_path[MAX_PATH];
     setlocale(LC_ALL, "");
 
@@ -123,11 +122,10 @@ int main
         fprintf(stderr, "Usage: %s <string>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-    snprintf(search_string, sizeof(search_string), "%s", argv[1]);
     snprintf(dic_path, sizeof(dic_path), "%s%s", getenv("HOME"), DIC_PATH);
 
     clock_t start = clock();
-    binary_search(search_string, dic_path);
+    binary_search(argv[1], dic_path);
     clock_t end = clock();
     double search_time = (double)(end - start) / CLOCKS_PER_SEC;
     printf("\nBinary search time: %f seconds\n", search_time);
