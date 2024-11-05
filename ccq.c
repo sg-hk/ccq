@@ -20,10 +20,11 @@
 #include "cJSON.h"
 
 #define CCQ_PATH "/.local/share/ccq/"
-#define DIC_PATH "/.local/share/ccq/all_dictionaries"
-#define MAX_SMALL 32
 #define MAX_PATH 128
 #define MAX_LONG 2048
+
+
+/* ccq-review functions start here */
 
 char *strdup // needs to be defined separately in >c99
 (const char *s)  
@@ -300,10 +301,83 @@ void write_file_from_string
     fclose(file);
 }
 
+void review
+(char *deck_name)
+{
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("HOME"), CCQ_PATH, "master.json");
+    printf("Accessing master deck at %s...\n", filepath);
+    char *json_data = read_file_to_string(filepath);
+    if (!json_data) {
+        fprintf(stderr, "Error reading file\n");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("Successfully read file\n");
+    }
+
+    printf("\nParsing master deck's json structure...\n");
+    cJSON *root = cJSON_Parse(json_data);
+    if (!root) {
+        fprintf(stderr, "Error parsing JSON at: %s\n", cJSON_GetErrorPtr());
+        fprintf(stderr, "Please try validating the JSON through an appropriate tool\n");
+        exit(EXIT_FAILURE);
+    }
+    printf("Successfully parsed structure\n\n");
+    free(json_data);
+    
+    cJSON *sub_decks = NULL;
+    cJSON_ArrayForEach(sub_decks, root) {
+        printf(" - %s\n", sub_decks->string);
+    }
+    char sub_deck[64];
+    fgets(sub_deck, sizeof(sub_deck), stdin);
+    sub_deck[strcspn(sub_deck, "\n")] = '\0'; // removing newline character
+
+    cJSON *sub_deck_object = cJSON_GetObjectItemCaseSensitive(root, sub_deck);
+    if (!sub_deck_object) {
+        fprintf(stderr, "Error accessing %s\n", sub_deck);
+        exit(EXIT_FAILURE);
+    } else printf("The chosen deck %s has correctly been accessed\n", sub_deck);
+
+    time_t today = time(NULL);
+    int i = 0;
+    cJSON *card = NULL;
+    cJSON_ArrayForEach(card, sub_deck_object) {
+        ++i;
+        if (card->type == cJSON_Object) {
+            cJSON *data = cJSON_GetObjectItemCaseSensitive(card, "card");
+            if (!data) printf("The %d-th card has a malformed 'data' array\n", i);
+            cJSON *log = cJSON_GetObjectItemCaseSensitive(card, "log");
+            if (!log) printf("The %d-th card has a malformed 'log' array\n", i);
+            cJSON *files = cJSON_GetObjectItemCaseSensitive(card, "files");
+            if (!files) printf("The %d-th card has a malformed 'files' array\n", i);
+
+            int due_date = cJSON_GetArrayItem(log,3)->valueint;
+            if (due_date < today) {
+                review_card(data, log, files, today);
+            }
+        }
+        else printf("The %d-th card is malformed\n", i);
+    }
+
+    printf("All cards reviewed!\n");
+
+    printf("Updating %s...\n", sub_deck);
+    char *updated_json_data = cJSON_Print(root);
+    write_file_from_string(filepath, updated_json_data);
+
+    cJSON_Delete(root);
+    free(updated_json_data);
+
+    return;
+}
+
+/* ccq-parse functions start here */
+
 char *parse_by_char
 (char *search_string)
 {
-       /* this function parses multibyte strings character by character:
+    /* this function parses multibyte strings character by character:
      * UTF-8 encodes characters in 1-4 byte sequences
      * and the number of leading 1s in the first byte reflects this
      * 0... = 1 byte, 11110... = 4 bytes
@@ -345,6 +419,18 @@ char *parse_by_char
 
     parsed_string[i] = '\0';
     return parsed_string;
+}
+
+wchar_t **build_search_array
+(wchar_t **parsed_string, int len)
+{
+    wchar_t **search_array = malloc(sizeof(MAX_LONG));
+    // truncate the parsed_string
+
+    // some regex to remove punctuation
+    // some regex to have a copy of the string without intermediate chars
+    
+    return search_array;
 }
 
 void binary_search
@@ -449,98 +535,30 @@ void parse
         move(0, offsets[x]);  // move cursor to correct offset index
     }
 
-    endwin();
+    endwin(); // exit TUI
 
+    /* transform the string in an array of chunks, such that
+     * "my name is john" becomes
+     * ["my", "my name", "my name is", "my name is john"]
+     * and finally do dictionary searches on each element */
+     
     wchar_t return_string[len];
-    swprintf(return_string, len, &input[x]);
-    wprintf(L"%ls\n", return_string);
+    swprintf(return_string, len, &input[x]); // the desired substring
+    return_array = parse_by_char(return_string); // split up by character
+    recursive_array = build_search_array(return_array, len); // and arranged incrementally
+    for (int i = 0; i < len; ++i) {
+        binary_search(return_array[i]);
+    }
 
     return;
 }
 
-void browse_deck
+void browse_deck // NOT CODED YET
 (char* deck_name)
 {
     if (cJSON_IsArray(sub_deck) || !cJSON_IsArray(sub_deck)) {
         return;
     }
-}
-
-void review
-(char *deck_name)
-{
-    char filepath[256];
-    snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("HOME"), CCQ_PATH, "master.json");
-    printf("Accessing master deck at %s...\n", filepath);
-    char *json_data = read_file_to_string(filepath);
-    if (!json_data) {
-        fprintf(stderr, "Error reading file\n");
-        exit(EXIT_FAILURE);
-    } else {
-        printf("Successfully read file\n");
-    }
-
-    printf("\nParsing master deck's json structure...\n");
-    cJSON *root = cJSON_Parse(json_data);
-    if (!root) {
-        fprintf(stderr, "Error parsing JSON at: %s\n", cJSON_GetErrorPtr());
-        fprintf(stderr, "Please try validating the JSON through an appropriate tool\n");
-        exit(EXIT_FAILURE);
-    }
-    printf("Successfully parsed structure\n\n");
-    free(json_data);
-
-    if (browse_flag) {
-        printf("Please input the deck you would like to browse:\n");
-    } else {
-        printf("Please input the deck you would like to study:\n");
-    }
-
-    cJSON *sub_decks = NULL;
-    cJSON_ArrayForEach(sub_decks, root) {
-        printf(" - %s\n", sub_decks->string);
-    }
-    char sub_deck[64];
-    fgets(sub_deck, sizeof(sub_deck), stdin);
-    sub_deck[strcspn(sub_deck, "\n")] = '\0'; // removing newline character
-
-    cJSON *sub_deck_object = cJSON_GetObjectItemCaseSensitive(root, sub_deck);
-    if (!sub_deck_object) {
-        fprintf(stderr, "Error accessing %s\n", sub_deck);
-        exit(EXIT_FAILURE);
-    } else printf("The chosen deck %s has correctly been accessed\n", sub_deck);
-
-    time_t today = time(NULL);
-    int i = 0;
-    cJSON *card = NULL;
-    cJSON_ArrayForEach(card, sub_deck_object) {
-        ++i;
-        if (card->type == cJSON_Object) {
-            cJSON *data = cJSON_GetObjectItemCaseSensitive(card, "card");
-            if (!data) printf("The %d-th card has a malformed 'data' array\n", i);
-            cJSON *log = cJSON_GetObjectItemCaseSensitive(card, "log");
-            if (!log) printf("The %d-th card has a malformed 'log' array\n", i);
-            cJSON *files = cJSON_GetObjectItemCaseSensitive(card, "files");
-            if (!files) printf("The %d-th card has a malformed 'files' array\n", i);
-
-            int due_date = cJSON_GetArrayItem(log,3)->valueint;
-            if (due_date < today) {
-                review_card(data, log, files, today);
-            }
-        }
-        else printf("The %d-th card is malformed\n", i);
-    }
-
-    printf("All cards reviewed!\n");
-
-    printf("Updating %s...\n", sub_deck);
-    char *updated_json_data = cJSON_Print(root);
-    write_file_from_string(filepath, updated_json_data);
-
-    cJSON_Delete(root);
-    free(updated_json_data);
-
-    return;
 }
 
 void print_help()
@@ -562,7 +580,7 @@ int main
     printf("Welcome to ccq v0.02 - a minimalistic flash card program in C\n");
 
     bool browse_flag = false, help_flag = false, parse_flag = false, review_flag = false;
-    char *to_be_parsed = NULL, *deck_name = NULL, *dic_path[MAX_PATH];
+    char *to_be_parsed = NULL, *deck_name = NULL, dic_path[MAX_PATH];
 
     if (argc != 0) {
         int opt;
@@ -592,7 +610,7 @@ int main
             exit(EXIT_FAILURE);
         }
 
-        snprintf(dicpath, sizeof(dic_path), "%s%s", getenv("HOME"), DIC_PATH);
+        snprintf(dic_path, sizeof(dic_path), "%s%s%s", getenv("HOME"), CCQ_PATH, "all_dictionaries");
 
         if (browse_flag) {
             browse_deck(deck_name);
