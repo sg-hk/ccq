@@ -1,7 +1,6 @@
 build_array.c
-ccq2
+ccq
 ccq-add.c
-ccq.c
 ccq-reader.c
 ccq-update.c
 master.json
