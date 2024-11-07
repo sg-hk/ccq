@@ -2,10 +2,12 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -152,19 +154,32 @@ int get_keypress
     return ch;
 }
 
-void play_audio
+int play_audio
 (char *audio)
 {
     // execlp() and not system() because safer
     pid_t pid = fork();
+    if (pid == -1) {
+        perror("Failed to fork");
+        return 1;
+    }
+
     if (pid == 0) {
         char filepath[128];
         snprintf(filepath, sizeof(filepath), "%s%s%s%s",
                  getenv("HOME"), CCQ_PATH, "media/", audio);
         execlp("mpv", "mpv", "--really-quiet", filepath, "2>&1");
         perror("Failed to execute mpv");
-        return;
-    } else perror("Failed to fork");
+        exit(EXIT_FAILURE);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            return 0;
+        } else {
+            return 1;
+        }
+    }
 }
 
 char *sanitize
@@ -175,43 +190,69 @@ char *sanitize
         perror("Memory allocation error for sanitized filepath");
         return NULL;
     }
-    int j = 0;
 
-    for (int i = 0; input[i] != '\0' && j < 127; ++i) {
-        if (isalnum(input[i] || input[i] == '.' || input[i] == '/' || input[i] == '_')) {
-            sanitized[++j] = input[i];
+    for (int i = 0, j = 0; input[i] != '\0' && j < 127; ++i) {
+        if (isalnum(input[i]) || input[i] == '.' || input[i] == '/' || input[i] == '_' ||
+            input[i] == '-') {
+            sanitized[j++] = input[i];  // increment j AFTER using it
         } else {
-            printf("Image file path %s has dangerous characters\n", input);
+            printf("Image file path %s has dangerous character: [%c]. ", input, input[i]);
             printf("File skipped...\n");
+            free(sanitized);
             return NULL;
         }
+        if (input[i+1] == '\0') {
+            sanitized[j] = '\0';
+        }
     }
-    sanitized[j] = '\0';
+
     return sanitized;
 }
 
-void render_image
+int render_image
 (char *image)
 {
     // system() and not execlp() because sixel needs a separate shell
     // sanitize() prevents shell injections
-    image = sanitize(image);
-    if (image) {
-        char filepath[128];
-        snprintf(filepath, sizeof(filepath), "%s%s%s%s", getenv("HOME"), CCQ_PATH, "media/", image);
-        char command[256];
-        snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-", image);
-        system(command);
+    char *safe_image = sanitize(image);
+    if (safe_image == NULL) {
+        return 1;
     }
+
+    char filepath[128];
+    snprintf(filepath, sizeof(filepath), "%s%s%s%s",
+             getenv("HOME"), CCQ_PATH, "media/", safe_image);
+    char command[256];
+    snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-",
+             filepath);
+
+    int result = system(command);
+    free(safe_image);
+
+    if (result == -1) {
+        perror("Failed to execute command");
+        return 1;
+    }
+    return 0;
 }
 
-void reveal_card
-(char *back, char *sentence, char *audio, char *image)
+int reveal_card
+(char *front, char *back, char *sentence, char *audio, char *image)
 {
-    printf("BACK:\n\t%s", back);
-    printf("SENTENCE:\n\t%s", sentence);
-    play_audio(audio); // assuming only one audiofile
-    render_image(image); // assuming only one imagefile
+    printf("FRONT:\n\t%s\n", front);
+    printf("BACK:\n\t%s\n", back);
+    printf("SENTENCE:\n\t%s\n", sentence);
+    printf("AUDIO:\n");
+    if (play_audio(audio) != 0) {
+        fprintf(stderr, "Error playing audio file\n");
+        return 1;
+    }
+    printf("IMAGE:\n");
+    if (render_image(image) != 0) {
+        fprintf(stderr, "Error displaying image file\n");
+        return 1;
+    }
+    return 0;
 }
 
 /* MAIN FUNCTIONS */
@@ -221,6 +262,7 @@ void review_cards
     // first pass: count due cards
     int today = (int)time(NULL);
     int i = 0, buffer_size = 1024, length_fields = 42;
+    bool isSuccessful = false;
     char *line = malloc(buffer_size);
     if (!line) {
         fprintf(stderr, "Memory allocation failure for line\n");
@@ -265,7 +307,7 @@ void review_cards
 
     // second pass: review cards
     rewind(deck);
-    printf("Starting review...\n");
+    printf("Starting review... ");
     printf("Press Enter (pass) or R (fail)\n");
     // re-initialize buffer and line
     buffer_size = 1024;
@@ -317,11 +359,12 @@ void review_cards
             int last = atoi(last_review_char);
 
             // get pass/fail
-            printf("\tREVIEW: [%s]\n", front);
             while (1) {
                 result = get_keypress();
                 if (result == '\n' || result == 'f' || result == 'F') {
-                    reveal_card(back, sentence, audio, image);
+                    if (reveal_card(front, back, sentence, audio, image) == 0) {
+                        isSuccessful = true;
+                    }
                     break;
                 } else {
                     printf("Input unrecognized. Please press Enter or F\n");
@@ -329,16 +372,18 @@ void review_cards
             }
 
             // get new scheduling data
-            printf("Scheduling card [%s]...\n", front);
-            ScheduleCard new = schedule_card(result, state, D, S, R, last);
-            char new_fields[43]; // the exact max length 42 + null terminator
-            snprintf(new_fields, sizeof(new_fields), "%d|%.3f|%.3f|%.3f|%d|%d\n",
-                     new.state, new.D, new.S, new.R, new.last, new.due);
-            printf("[%s]\tLENGTH [%lu]\n", new_fields, strlen(new_fields));
-            exit(EXIT_SUCCESS);
-            fseek(deck, -length_fields, SEEK_CUR);
-            fwrite(new_fields, sizeof(char), strlen(new_fields), deck);
-            printf("Scheduled card!\n");
+            if (isSuccessful) {
+                printf("Scheduling card [%s]...\n", id_char);
+                ScheduleCard new = schedule_card(result, state, D, S, R, last);
+                char new_fields[43]; // the length 42 (constant) + null terminator
+                snprintf(new_fields, sizeof(new_fields), "%d|%.3f|%.3f|%.3f|%d|%d\n",
+                        new.state, new.D, new.S, new.R, new.last, new.due);
+                fseek(deck, -length_fields, SEEK_CUR);
+                fwrite(new_fields, sizeof(char), strlen(new_fields), deck);
+                printf("Scheduled card!\n");
+            } else {
+                fprintf(stderr, "Card was not scheduled\n");
+            }
 
         }
     }

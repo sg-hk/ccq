@@ -3,5 +3,4 @@ ccq
 ccq-add.c
 ccq-reader.c
 ccq-update.c
-master.json
 termbox2.h
