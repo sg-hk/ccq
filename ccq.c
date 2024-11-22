@@ -413,20 +413,66 @@ WordInfo retrieve_word
 char *retrieve_audio
 (char *hanzi)
 {
+	// binary search then look above and below for all matches
 	char *audio_path = hanzi;
 	return audio_path;
 }
 
 void add_card
-(FILE *deck, int last_id, char *hanzi, char *reading, char *definition,
- char *sentence, char *image_path)
+(FILE *deck, char *hanzi, char *sentence, char *image_path)
 {
+	/* this function will get its arguments from ccq_parse
+	 * or directly from command line */
+
 	// add rsync pull here
-	// get card data
-	int id = last_id + 1;
+	//
+	// get last id
+	fseek(deck, 0, SEEK_END);
+	long fpos = ftell(deck);
+	while (fpos > 0) {
+		--fpos;
+		fseek(deck, fpos, SEEK_SET);
+		if (fgetc(deck) == '\n') {
+			break;
+		}
+	}
+	int buffer = 1024;
+	char *line = malloc(buffer * sizeof(buffer));
+	if (!line) {
+		fprintf(stderr, "Error allocating memory to line\n");
+		return;
+	}
+	int current_size = 0, ch = 0;
+	while ((ch = fgetc(deck)) != '\n' && ch != EOF) {
+		line[current_size++] = ch;
+		if (current_size == buffer) {
+			buffer *= 2;
+			char *new_line = realloc(line, buffer);
+			if (!new_line) {
+				free(line);
+				fprintf(stderr, "Error reallocating memory to line\n");
+				return;
+			}
+			line = new_line;
+		}
+	}
+	line[current_size] = '\0';
+	char *first_pipe = strchr(line, '|');
+	if (!first_pipe) {
+		fprintf(stderr, "No '|' found in line\n");
+		free(line);
+		return;
+	}
+	*first_pipe = '\0'; // null-terminate at |
+	int id = atoi(line) + 1; // so that we can just atoi the line
+	free(line);
+
+	// get dictionary data and audio filepath
 	WordInfo back = retrieve_word(hanzi);
-	int length = strlen(reading) + strlen(definition) + 1; // + \n
+	int length = strlen(back.reading) + strlen(back.definition) + 1; // +1  because \n
 	char *audio_path = retrieve_audio(hanzi);
+
+	// initialize scheduler data
 	int state = 0;
 	float D = 0.0;
 	float S = 0.0;
@@ -459,8 +505,9 @@ void add_card
 	fflush(deck);
 	free(audio_path);
 	free(card_line);
+
 	// add rsync push here
-	// return to main functions
+
 	return;
 }
 
