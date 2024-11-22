@@ -23,3 +23,4 @@ to do:
 * ccq-add: card creation
 * ccq-update: add sentences to existing card
 * ccq-parse: TUI for text parsing
+* write man page

@@ -23,10 +23,15 @@ const float w[] = {
     2.2698, 0.2315, 2.9898, 0.51655, 0.6621
 };
 
+typedef struct WordInfo {
+	char *reading;
+	char *definition;
+} WordInfo;
+
 typedef struct ScheduleCard {
-    int state;
-    float D, S, R;
-    int last, due;
+	int state;
+	float D, S, R;
+	int last, due;
 } ScheduleCard;
 
 /* SCHEDULING FUNCTIONS */
@@ -105,7 +110,7 @@ ScheduleCard schedule_card
         scheduled_card.state = 1;
         scheduled_card.D = get_d_init(G);
         scheduled_card.S = w[G];
-        scheduled_card.R = 1;
+        scheduled_card.R = 1.0;
         scheduled_card.due = now + 86400;
     } else if (state == 1 && result != '\n') { // young failed
         scheduled_card.D = get_D(D, G);
@@ -240,7 +245,7 @@ int reveal_card
 (char *front, char *back, char *sentence, char *audio, char *image)
 {
     printf("FRONT:\n\t%s\n", front);
-    printf("BACK:\n\t%s\n", back);
+    printf("BACK:\n\t%s\n", back); // here maybe deserialize the \n
     printf("SENTENCE:\n\t%s\n", sentence);
     printf("AUDIO:\n");
     if (play_audio(audio) != 0) {
@@ -255,7 +260,6 @@ int reveal_card
     return 0;
 }
 
-/* MAIN FUNCTIONS */
 void review_cards
 (FILE *deck)
 {
@@ -392,6 +396,96 @@ void review_cards
     return;
 }
 
+/* ADD, UPDATE, PARSE FUNCTIONS */
+WordInfo retrieve_word
+(char *hanzi)
+{
+	// lookup hanzi in hash table
+	// open matched dictionary files
+	// retrieve second (reading) and third (definition) fields
+	// concatenate definitions by reading and add dic name
+	char *reading;
+	char *definition;
+	WordInfo word_info = {reading, definition};
+	return word_info;
+}
+
+char *retrieve_audio
+(char *hanzi)
+{
+	char *audio_path = hanzi;
+	return audio_path;
+}
+
+void add_card
+(FILE *deck, int last_id, char *hanzi, char *reading, char *definition,
+ char *sentence, char *image_path)
+{
+	// add rsync pull here
+	// get card data
+	int id = last_id + 1;
+	WordInfo back = retrieve_word(hanzi);
+	int length = strlen(reading) + strlen(definition) + 1; // + \n
+	char *audio_path = retrieve_audio(hanzi);
+	int state = 0;
+	float D = 0.0;
+	float S = 0.0;
+	float R = 0.0;
+	int last = 0;
+	int due = 0;
+
+	// safely write to variable
+	int buffer_size = snprintf(NULL, 0, "%d|%s|%s|%s|%s|%s|%s|%d|%.3f|%.3f|%.3f|%d|%d",
+			id, hanzi, back.reading, back.definition,
+			sentence, audio_path, image_path,
+			0, 0.0f, 0.0f, 0.0f, 0, 0) + 1;
+	char *card_line = malloc(buffer_size);
+	if (card_line == NULL) {
+		perror("Failed to allocate memory for card_line");
+		free(audio_path);
+		return;
+	}
+	snprintf(card_line, buffer_size, "%d|%s|%s|%s|%s|%s|%s|%d|%.3f|%.3f|%.3f|%d|%d",
+			id, hanzi, back.reading, back.definition,
+			sentence, audio_path, image_path,
+			0, 0.0f, 0.0f, 0.0f, 0, 0);
+
+
+	// write to deck
+	fseek(deck, 0, SEEK_END);
+	if (fputs(card_line, deck) == EOF) {
+		perror("Failed to write to deck");
+	}
+	fflush(deck);
+	free(audio_path);
+	free(card_line);
+	// add rsync push here
+	// return to main functions
+	return;
+}
+
+void add_sentence
+(FILE *deck, char *hanzi, char *sentence)
+{
+	// binary search hanzi in deck's second fields
+	// append sentence to sentence field
+	return;
+}
+
+void ccq_parse
+(char *text)
+{
+	// TUI here with:
+	// - vim keybindings to navigate text
+	// - vim v key to select text
+	// - add_card and add_sentence logic
+	// look-up panel in TUI
+	// recursive tiled panels for nested look-ups
+	return;
+}
+
+
+/* MAIN FUNCTION */
 int main
 (int argc, char **argv)
 {
