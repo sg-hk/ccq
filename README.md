@@ -12,15 +12,21 @@ cards are expected to be found in ~/.local/share/ccq/argv[1] and follow the form
 ```id|front|back|sentence|audio|image|state|difficulty|stability|retrievability|last_review|due_date```
 where:
 * each line is a separate card
-* audio and image are in media/ subfolder and are simply the filenames
+* audio and image are in the ```media/``` subfolder and are simply the filenames
 * state 0 = new, 1 = young, 2 = mature
 * D, S, R are float variables used in the scheduler
 * last_review and due_date are simple UNIX timestamps
+
 the scheduler works without day boundaries. adding one day to the card's due date will simply add 86 400 seconds. there is no adjusting of the weights yet
 
 to do:
-* adjustment of weights based on deck data
+* adjustment of weights based on deck data (FSRS's ML model)
 * ccq-add: card creation
 * ccq-update: add sentences to existing card
 * ccq-parse: TUI for text parsing
-* write man page
+* man page
+* link to dictionaries
+* Makefile including man page and dictionaries
+
+to consider:
+* frequency data for words
