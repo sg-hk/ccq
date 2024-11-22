@@ -1,6 +1,2 @@
-build_array.c
 ccq
-ccq-add.c
-ccq-reader.c
-ccq-update.c
-termbox2.h
+ccq_old.c
