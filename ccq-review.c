@@ -58,7 +58,7 @@ int play_audio
         char filepath[128];
         snprintf(filepath, sizeof(filepath), "%s%s%s%s",
                  getenv("HOME"), CCQ_PATH, "media/", audio);
-        execlp("mpv", "mpv", filepath);
+        execlp("mpv", "mpv", filepath, (char *)NULL);
         perror("Failed to execute mpv");
         return 1;
     } else {
@@ -132,7 +132,7 @@ int reveal_card
     printf("FRONT:\n\t%s\n", card->word.key);
     printf("READING:\n\t%s\n", card->word.reading); // here maybe deserialize the \n
     printf("DEFINITION:\n\t%s\n", card->word.definition); // here maybe deserialize the \n
-    printf("SENTENCE:\n\t%s\n", card->context.sentence);
+    printf("SENTENCE:\n\t%s\n", card->context.sentences[0]);
     printf("AUDIO:\n");
     if (play_audio(card->context.recordings[0]) != 0) {
         fprintf(stderr, "Error playing audio file\n");

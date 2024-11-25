@@ -17,6 +17,16 @@
 
 #include "ccq.h"
 
+// parameters
+static const float w[] = {
+    0.4177, 0, 0.9988, 0, // initial stability for grades A/H/G/E
+    7.1949, 0.5345, 1.4604,
+    0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605,
+    2.2698, 0.2315, 2.9898, 0.51655, 0.6621
+};
+#define FACTOR 19.0/81.0 // fsrs factor
+#define DECAY -0.5 // fsrs decay
+
 float get_d_init(int G)
 {
     float d_init = w[4] - exp(w[5] * G) + 1;
@@ -70,41 +80,41 @@ float get_D(float D, int G)
 }
 
 ScheduleInfo schedule_card
-(ScheduleInfo old_sch, int result);
+(ScheduleInfo old_sch, int result)
 {
-    ScheduleInfo scheduled_card = {0, 0.0, 0.0, 0.0, 0, 0};
+    ScheduleInfo scheduled_card = {0};
     int G = result == '\n' ? 2 : 0; // only grades 0 ("again") and 2 ("good")
     int now = (int)time(NULL);
-    float days_since = last != 0 ? (now - last) / 86400 : 0; // 0 if new
+    float days_since = old_sch.last != 0 ? (now - old_sch.last) / 86400 : 0; // 0 if new
     float finterval = 0;
 
     scheduled_card.last = now;
 
-    if (state == 0) { // new
+    if (old_sch.state == 0) { // new
         scheduled_card.state = 1;
         scheduled_card.D = get_d_init(G);
         scheduled_card.S = w[G];
         scheduled_card.R = 1.0;
         scheduled_card.due = now + 86400;
-    } else if (state == 1 && result != '\n') { // young failed
+    } else if (old_sch.state == 1 && result != '\n') { // young failed
         scheduled_card.D = get_D(old_sch.D, G);
         scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R); // _recall not _forget bc young
         scheduled_card.R = get_R(days_since, old_sch.S);
         scheduled_card.due = now + 86400;
-    } else if (state == 1 && result == '\n') { // young pass
+    } else if (old_sch.state == 1 && result == '\n') { // young pass
         scheduled_card.state = 2;
         scheduled_card.D = get_D(old_sch.D, G);
         scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
         scheduled_card.R = get_R(days_since, old_sch.S);
         finterval = get_new_interval(scheduled_card.S);
         scheduled_card.due = now + round(finterval);
-    } else if (state == 2 && result != '\n') { // mature failed
+    } else if (old_sch.state == 2 && result != '\n') { // mature failed
         scheduled_card.state = 1;
         scheduled_card.D = get_D(old_sch.D, G);
         scheduled_card.S = get_forget_S(old_sch.D, old_sch.S, old_sch.R);
         scheduled_card.R = get_R(days_since, old_sch.S);
         scheduled_card.due = now + 86400;
-    } else if (state == 2 && result == '\n') { // mature pass
+    } else if (old_sch.state == 2 && result == '\n') { // mature pass
         scheduled_card.D = get_D(old_sch.D, G);
         scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
         scheduled_card.R = get_R(days_since, old_sch.S);
