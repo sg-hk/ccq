@@ -1,3 +1,4 @@
+![ccq_logo](/ccq.png "ccq")
 # ccq
 ## (存储器 - **c**ún **c**hǔ **q**ì) is a minimalistic flashcard program in C
 #### Description

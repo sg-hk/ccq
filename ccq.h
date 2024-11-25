@@ -5,7 +5,7 @@
 
 /* CONSTANTS */
 #define CCQ_PATH "/.local/share/ccq/"
-#define DB_SIZE 1000000 // dictionary database size
+#define DB_SIZE 846271 // dictionary database size
 
 // Card structs
 typedef struct WordInfo {
