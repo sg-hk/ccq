@@ -20,72 +20,79 @@
 
 int get_keypress(void)
 {
-    /* function is same as getchar() but without
-     * - echoing char
-     * - requiring Return */
-    struct termios oldt, newt;
-    int ch;
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    ch = getchar(); // get char in new terminal and switch back to old
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    return ch;
+	/* function is same as getchar() but without
+	 * - echoing char
+	 * - requiring Return */
+	struct termios oldt, newt;
+	int ch;
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	ch = getchar(); // get char in new terminal and switch back to old
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	return ch;
 }
 
 int play_audio(char *audio)
 {
-    // execlp() and not system() because safer
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("Failed to fork");
-        return 1;
-    }
+	// execlp() and not system() because safer
+	pid_t pid = fork();
+	if (pid == -1) {
+		perror("Failed to fork");
+		return 1;
+	}
 
-    if (pid == 0) {
-        int dev_null = open("/dev/null", O_WRONLY);
-        if (dev_null == -1) {
-            perror("Failed to open /dev/null");
-            return 1;
-        }
-        dup2(dev_null, STDOUT_FILENO);
-        close(dev_null);
+	if (pid == 0) {
+		int dev_null = open("/dev/null", O_WRONLY);
+		if (dev_null == -1) {
+			perror("Failed to open /dev/null");
+			return 1;
+		}
+		dup2(dev_null, STDOUT_FILENO);
+		close(dev_null);
 
-        char filepath[128];
-        snprintf(filepath, sizeof(filepath), "%s%s%s%s",
-                 getenv("HOME"), CCQ_PATH, "media/", audio);
-        execlp("mpv", "mpv", filepath, (char *)NULL);
-        perror("Failed to execute mpv");
-        return 1;
-    } else {
-        int status;
-        waitpid(pid, &status, WNOHANG);
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            return 0;
-        } else {
-            return 1;
-        }
-    }
+		char filepath[128];
+		snprintf(filepath, sizeof(filepath), "%s%s%s%s",
+				getenv("HOME"), CCQ_PATH, "media/", audio);
+		execlp("mpv", "mpv", filepath, (char *)NULL);
+		perror("Failed to execute mpv");
+		return 1;
+	} else {
+		int status;
+		if (waitpid(pid, &status, 0) == -1) {
+			perror("Failed to wait for child mpv process");
+			return 1;
+		}
+
+		//        waitpid(pid, &status, WNOHANG);
+		//        the above would cause to exit early
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+			return 0;
+		} else {
+			fprintf(stderr, "Exited audio playback with error\n");
+			return 1;
+		}
+	}
 }
 
 char *sanitize(char *input)
 {
-    char *sanitized = malloc(128);
-    if (!sanitized) {
-        perror("Memory allocation error for sanitized filepath");
-        return NULL;
-    }
+	char *sanitized = malloc(128);
+	if (!sanitized) {
+		perror("Memory allocation error for sanitized filepath");
+		return NULL;
+	}
 
-    for (int i = 0, j = 0; input[i] != '\0' && j < 127; ++i) {
-        if (isalnum(input[i]) || input[i] == '.' || input[i] == '/' || input[i] == '_' ||
-            input[i] == '-') {
-            sanitized[j++] = input[i];  // increment j AFTER using it
-        } else {
-            printf("Image file path %s has dangerous character: [%c]. ", input, input[i]);
-            printf("File skipped...\n");
-            free(sanitized);
-            return NULL;
+	for (int i = 0, j = 0; input[i] != '\0' && j < 127; ++i) {
+		if (isalnum(input[i]) || input[i] == '.' || input[i] == '/' || input[i] == '_' ||
+				input[i] == '-') {
+			sanitized[j++] = input[i];  // increment j AFTER using it
+		} else {
+			printf("Image file path %s has dangerous character: [%c]. ", input, input[i]);
+			printf("File skipped...\n");
+			free(sanitized);
+			return NULL;
         }
         if (input[i+1] == '\0') {
             sanitized[j] = '\0';
@@ -226,6 +233,7 @@ void review_cards(FILE *deck)
             }
 
             // context info
+	    // dynamic allocation logic to be implemented
 	    int c_init = 3;
 	    curr.context.sentences = malloc(c_init * sizeof(char*));
 	    curr.context.recordings = malloc(c_init * sizeof(char*));
@@ -282,6 +290,9 @@ void review_cards(FILE *deck)
                 fprintf(stderr, "Card was not scheduled\n");
             }
 
+	    free(curr.context.sentences);
+	    free(curr.context.images);
+	    free(curr.context.recordings);
         }
     }
     free(line);
