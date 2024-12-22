@@ -10,7 +10,6 @@
 // Card structs
 typedef struct WordInfo {
     char *key;
-    char *reading;
     char *definition;
 } WordInfo;
 
@@ -31,6 +30,12 @@ typedef struct Card {
     ContextInfo context;
     ScheduleInfo schedule;
 } Card;
+
+typedef struct DicEntry {
+	char *key;
+	char *definition;
+	char **recordings;
+} DicEntry;
 
 /* FUNCTIONS */
 // Reviewing

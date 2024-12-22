@@ -10,9 +10,9 @@ includes [FSRS scheduling](https://github.com/open-spaced-repetition/py-fsrs/blo
 WIP but should work as basic reviewer and scheduler
 
 cards are expected to be found in ~/.local/share/ccq/argv[1] and follow the format
-```id|front|back|sentence|audio|image|state|difficulty|stability|retrievability|last_review|due_date```
+```front|back|audio|sentences|image|state|difficulty|stability|retrievability|last_review|due_date```
 where:
-* each line is a separate card
+* each line is a separate card; front is used as key and duplicate cards are not allowed
 * audio and image are in the ```media/``` subfolder and are simply the filenames
 * state 0 = new, 1 = young, 2 = mature
 * D, S, R are float variables used in the scheduler

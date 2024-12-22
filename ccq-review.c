@@ -6,7 +6,6 @@
 
 #include <ctype.h>
 #include <fcntl.h>
-#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,8 +18,7 @@
 
 #include "ccq.h"
 
-int get_keypress
-(void)
+int get_keypress(void)
 {
     /* function is same as getchar() but without
      * - echoing char
@@ -36,8 +34,7 @@ int get_keypress
     return ch;
 }
 
-int play_audio
-(char *audio)
+int play_audio(char *audio)
 {
     // execlp() and not system() because safer
     pid_t pid = fork();
@@ -72,8 +69,7 @@ int play_audio
     }
 }
 
-char *sanitize
-(char *input)
+char *sanitize(char *input)
 {
     char *sanitized = malloc(128);
     if (!sanitized) {
@@ -99,8 +95,7 @@ char *sanitize
     return sanitized;
 }
 
-int render_image
-(char *image)
+int render_image(char *image)
 {
     // system() and not execlp() because sixel needs a separate shell
     // sanitize() prevents shell injections
@@ -126,11 +121,9 @@ int render_image
     return 0;
 }
 
-int reveal_card
-(Card *card)
+int reveal_card(Card *card)
 {
     printf("FRONT:\n\t%s\n", card->word.key);
-    printf("READING:\n\t%s\n", card->word.reading); // here maybe deserialize the \n
     printf("DEFINITION:\n\t%s\n", card->word.definition); // here maybe deserialize the \n
     printf("SENTENCE:\n\t%s\n", card->context.sentences[0]);
     printf("AUDIO:\n");
@@ -146,8 +139,7 @@ int reveal_card
     return 0;
 }
 
-void review_cards
-(FILE *deck)
+void review_cards(FILE *deck)
 {
     // first pass: count due cards
     int today = (int)time(NULL);
@@ -223,22 +215,33 @@ void review_cards
 
         int date = atoi(strrchr(line, '|') + 1);
         if (date < today) {
-            Card curr = {{NULL, NULL, NULL}, {NULL, NULL, NULL},
+            Card curr = {{NULL, NULL}, {NULL, NULL, NULL},
                          {0, 0.0, 0.0, 0.0, 0, date}};
             // word info
             curr.word.key = strtok(line, "|");
-            curr.word.reading = strtok(NULL, "|");
             curr.word.definition = strtok(NULL, "|");
-            if (curr.word.key == NULL || curr.word.reading == NULL
-                || curr.word.definition == NULL) {
+            if (curr.word.key == NULL || curr.word.definition == NULL) {
                 fprintf(stderr, "Line malformed: [%s]\n", line);
                 exit(EXIT_FAILURE);
             }
 
             // context info
+	    int c_init = 3;
+	    curr.context.sentences = malloc(c_init * sizeof(char*));
+	    curr.context.recordings = malloc(c_init * sizeof(char*));
+	    curr.context.images = malloc(c_init * sizeof(char*));
+
+	    if (!curr.context.sentences || !curr.context.recordings || !curr.context.images) {
+		    fprintf(stderr, "Memory allocation failed\n");
+		    exit(EXIT_FAILURE);
+	    }
+
             curr.context.sentences[0] = strtok(NULL, "|");
-            curr.context.images[0] = strtok(NULL, "|");
+	    printf("Sentences ok\n");
             curr.context.recordings[0] = strtok(NULL, "|");
+	    printf("Recordings ok\n");
+            curr.context.images[0] = strtok(NULL, "|");
+	    printf("Images ok\n");
 
             // schedule info & conversions
             char *state_char = strtok(NULL, "|");

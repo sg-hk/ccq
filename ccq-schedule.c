@@ -2,7 +2,6 @@
  * * receive card's ScheduleInfo and review result from reviewer
  * * calculate new ScheduleInfo and due date */
 
-#include <ctype.h>
 #include <fcntl.h>
 #include <math.h>
 #include <stdbool.h>
@@ -27,51 +26,51 @@ static const float w[] = {
 #define FACTOR 19.0/81.0 // fsrs factor
 #define DECAY -0.5 // fsrs decay
 
-float get_d_init(int G)
+float get_d_init(int G) 
 {
     float d_init = w[4] - exp(w[5] * G) + 1;
     return d_init;
 }
 
-float get_new_interval(float S)
+float get_new_interval(float S) 
 {
     float new_interval = (S / FACTOR) * (pow(0.9, (1 / DECAY)) - 1);
     return new_interval;
 }
 
-float get_mean_reversion(float a, float b)
+float get_mean_reversion(float a, float b) 
 {
     float mean_reversion = w[7] * a + (1 - w[7]) * b;
     return mean_reversion;
 }
 
-float get_sterm_S(float S, int G)
+float get_sterm_S(float S, int G) 
 {
     float sterm_S = S * exp(w[17] * (G - 2 + w[18]));
     return sterm_S;
 }
 
-float get_R(int t, float S)
+float get_R(int t, float S) 
 {
     float R = pow((1 + FACTOR * t / S), DECAY);
     return R;
 }
 
-float get_forget_S(float D, float S, float R)
+float get_forget_S(float D, float S, float R) 
 {
     float forget_S = w[11] * pow(D, -w[12]) *
         (pow((S + 1), w[13]) - 1) * exp(w[14] * (1 - R));
     return forget_S;
 }
 
-float get_recall_S(float D, float S, float R)
+float get_recall_S(float D, float S, float R) 
 {
     float recall_S = S * (1 + exp(w[8]) * (11 - D) *
                           pow(S, -w[9]) * (exp(w[10] * (1 - R)) - 1));
     return recall_S;
 }
 
-float get_D(float D, int G)
+float get_D(float D, int G) 
 {
     float a = get_d_init(4);
     float b = D - w[6] * (G - 3);
@@ -79,8 +78,7 @@ float get_D(float D, int G)
     return D_new;
 }
 
-ScheduleInfo schedule_card
-(ScheduleInfo old_sch, int result)
+ScheduleInfo schedule_card(ScheduleInfo old_sch, int result) 
 {
     ScheduleInfo scheduled_card = {0};
     int G = result == '\n' ? 2 : 0; // only grades 0 ("again") and 2 ("good")
@@ -120,6 +118,8 @@ ScheduleInfo schedule_card
         scheduled_card.R = get_R(days_since, old_sch.S);
         finterval = get_new_interval(scheduled_card.S);
         scheduled_card.due = now + round(finterval);
+    } else {
+	    fprintf(stderr, "Mistake in card scheduling\n");
     }
 
     return scheduled_card;
