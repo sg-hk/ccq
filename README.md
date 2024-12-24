@@ -20,11 +20,10 @@ where:
 the scheduler works without day boundaries. adding one day to the card's due date will simply add 86 400 seconds. there is no adjusting of the weights yet
 
 to do:
-* adjustment of weights based on deck data (FSRS's ML model)
-* array processing logic for multiple sentence, image, audio
-* ccq-add: card creation
-* ccq-update: add context to existing card (sentences, recordings, images)
-* ccq-parse: TUI for text parsing
+* update relevant variables to wide string types
+* add: deck, dictionary, corpus search logic
+* scheduler: adjustment of weights based on deck data (FSRS's ML model)
+* reviewer: array processing logic for multiple sentence, image, audio
 * man page
-* link to dictionaries
+* link to dictionaries, corpus
 * Makefile including man page and dictionaries
