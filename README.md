@@ -3,11 +3,10 @@
 ## (存储器 - **c**ún **c**hǔ **q**ì) is a minimalistic flashcard program in C
 #### Description
 
-command line flashcard tool that strives for simplicity
+[WIP!] command line flashcard tool that strives for simplicity
 
 includes [FSRS scheduling](https://github.com/open-spaced-repetition/py-fsrs/blob/main/ALGORITHM.md)
 
-WIP but should work as basic reviewer and scheduler
 
 cards are expected to be found in ~/.local/share/ccq/argv[1] and follow the format
 ```front|back|audio|sentences|image|state|difficulty|stability|retrievability|last_review|due_date```
@@ -22,12 +21,10 @@ the scheduler works without day boundaries. adding one day to the card's due dat
 
 to do:
 * adjustment of weights based on deck data (FSRS's ML model)
+* array processing logic for multiple sentence, image, audio
 * ccq-add: card creation
-* ccq-update: add sentences to existing card
+* ccq-update: add context to existing card (sentences, recordings, images)
 * ccq-parse: TUI for text parsing
 * man page
 * link to dictionaries
 * Makefile including man page and dictionaries
-
-to consider:
-* frequency data for words

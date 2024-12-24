@@ -5,7 +5,7 @@
 
 /* CONSTANTS */
 #define CCQ_PATH "/.local/share/ccq/"
-#define DB_SIZE 846271 // dictionary database size
+#define DB_SIZE 846271 // dictionary database size (n lines/entries)
 
 // Card structs
 typedef struct WordInfo {
@@ -39,6 +39,8 @@ typedef struct DicEntry {
 
 /* FUNCTIONS */
 // Reviewing
+void dis_raw(struct termios *original);
+void en_raw(struct termios *original);
 int get_keypress();
 int play_audio(char *audio);
 char *sanitize(char *input);
