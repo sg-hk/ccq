@@ -2,6 +2,7 @@
 #define CCQ_H_
 
 #include <stdio.h>
+#include <wchar.h>
 
 /* CONSTANTS */
 #define CCQ_PATH "/.local/share/ccq/"
@@ -9,26 +10,26 @@
 
 // Card structs
 typedef struct WordInfo {
-    char *key;
-    char *definition;
+	wchar_t *key;
+	wchar_t *definition;
 } WordInfo;
 
 typedef struct ContextInfo {
-    char **sentences;
-    char **images;
-    char **recordings;
+	wchar_t **sentences;
+	char **images;
+	char **recordings;
 } ContextInfo;
 
 typedef struct ScheduleInfo {
-    int state;
-    float D, S, R;
-    int last, due;
+	int state;
+	float D, S, R;
+	int last, due;
 } ScheduleInfo;
 
 typedef struct Card {
-    WordInfo word;
-    ContextInfo context;
-    ScheduleInfo schedule;
+	WordInfo word;
+	ContextInfo context;
+	ScheduleInfo schedule;
 } Card;
 
 typedef struct DicEntry {
@@ -57,7 +58,7 @@ float get_forget_S(float D, float S, float R);
 float get_recall_S(float D, float S, float R);
 float get_D(float D, int G);
 ScheduleInfo schedule_card(ScheduleInfo old_sch, int result);
-// Editing
+// Adding
 
 
 #endif // CCQ_H_

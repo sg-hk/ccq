@@ -48,35 +48,36 @@ wchar_t *interactive_select(const wchar_t *input)
 	printf(" Enter to confirm, 'q' to quit.");
 
         char c = getchar();
-        if (c == '\033') { // Handle arrow keys
-            getchar(); // Skip '['
+        if (c == '\033') { // escape character
+            getchar(); // skip '[', the control sequence index
             switch (getchar()) {
-                case 'C': // Right arrow
-                    if (cursor_pos < len - 1) cursor_pos++;
+                case 'C': // ->
+                    if (cursor_pos < len - 1) ++cursor_pos;
                     break;
-                case 'D': // Left arrow
-                    if (cursor_pos > 0) cursor_pos--;
+                case 'D': // <-
+                    if (cursor_pos > 0) --cursor_pos;
                     break;
             }
-        } else if (c == 'v') { // Toggle selection mode
-            if (start_select == -1) {
-                start_select = cursor_pos; // Start selection
+        } else if (c == 'v') {
+            if (start_select == -1) { // if no selection, assign start position
+                start_select = cursor_pos;
             } else {
-                start_select = -1; // Exit selection mode
+                start_select = -1; // otherwise exit selection
             }
-        } else if (c == '\n') { // Confirm selection
-            if (start_select != -1) {
+        } else if (c == '\n') {
+            if (start_select != -1) { // require a selection
+		// start end vs end start logic
                 int start = start_select < cursor_pos ? start_select : cursor_pos;
                 int end = start_select > cursor_pos ? start_select : cursor_pos;
-
                 size_t selection_len = end - start + 1;
+
                 selection = malloc((selection_len + 1) * sizeof(wchar_t));
                 if (!selection) {
                     fprintf(stderr, "Memory allocation error for selection\n");
                     break;
                 }
                 wcsncpy(selection, &input[start], selection_len);
-                selection[selection_len] = L'\0'; // Null-terminate
+                selection[selection_len] = L'\0';
                 break;
             }
         } else if (c == 'q') { // Exit
