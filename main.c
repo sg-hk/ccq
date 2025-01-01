@@ -20,9 +20,15 @@
  * CONSTANTS
  */
 
+
 const char *ccq_dirpath = "/.local/share/ccq/";
 const char *db_fpath = "/.local/share/ccq/dictionary_masterfile";
-const char *media_dirpath = "/.local/share/ccq/media";
+const char *media_dirpath = "/.local/share/ccq/media/";
+
+const char *deck = "main";
+const int deck_size = 500;
+const char *db = "dictionary_masterfile";
+const int db_size = 888888;
 
 const float factor = 19.0/81.0; // fsrs factor
 const float decay = -0.5; // fsrs decay
@@ -40,26 +46,21 @@ const float w[] =
  * STRUCTS
  */
 
-typedef struct CorpusInfo {
-	char **files;
-	int *bytes;
-	wchar_t **sntns;
-} CorpusInfo;
-
-typedef struct ScheduleInfo {
+typedef struct SchNum {
 	int state;
 	float D, S, R;
 	int last, due;
-} ScheduleInfo;
+} SchNum;
 
 typedef struct Entry {
 	wchar_t *k;
-	char **rds;
+	wchar_t **rds;
 	wchar_t **defs;
-	char **audio_arr;
-	char **img_arr;
-	CorpusInfo sinfo;
-	ScheduleInfo schdl;
+	wchar_t **audio_arr;
+	wchar_t **img_arr;
+	wchar_t *pos_arr; // fn-byte,fn-byte
+	wchar_t **sntn_arr;
+	SchNum schdl;
 } Entry;
 
 
@@ -67,7 +68,131 @@ typedef struct Entry {
  * FUNCTIONS
  */
 
-/* Helper: scheduling */ 
+
+/* Utils: general */
+wchar_t *ec64(wchar_t *p)
+{
+	static char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t sl = wcslen(p), ml = sl * 4 + 1;
+	char *mb = malloc(ml), *outb;
+	if(!mb) return NULL;
+	wcstombs(mb, p, ml);
+	{
+		int n = 0, i = 0;
+		while(mb[n]) n++;
+		int olen = (n+2)/3*4;
+		outb = malloc(olen+1);
+		if(!outb){ free(mb); return NULL; }
+		int j=0; for(; i<n; i+=3) {
+			unsigned long v = mb[i]<<16;
+			if(i+1<n) v |= mb[i+1]<<8;
+			if(i+2<n) v |= mb[i+2];
+			outb[j++] = b64[(v>>18)&63];
+			outb[j++] = b64[(v>>12)&63];
+			outb[j++] = (i+1<n)?b64[(v>>6)&63]:'=';
+			outb[j++] = (i+2<n)?b64[v&63]:'=';
+		}
+		outb[j] = 0;
+	}
+	free(mb);
+	{
+		size_t wl = mbstowcs(NULL, outb, 0) + 1;
+		wchar_t *r = malloc(wl*sizeof(wchar_t));
+		if(!r){ free(outb); return NULL; }
+		mbstowcs(r, outb, wl);
+		free(outb);
+		return r;
+	}
+}
+
+wchar_t *dc64(wchar_t *enc)
+{
+	/*
+	 * takes wide b64 input
+	 * returns wide decoded output
+	 */
+
+	static int t[256] = { 
+		['A']=0, ['B']=1, ['C']=2, ['D']=3, ['E']=4, ['F']=5, ['G']=6, ['H']=7,
+		['I']=8, ['J']=9, ['K']=10,['L']=11,['M']=12,['N']=13,['O']=14,['P']=15,
+		['Q']=16,['R']=17,['S']=18,['T']=19,['U']=20,['V']=21,['W']=22,['X']=23,
+		['Y']=24,['Z']=25,['a']=26,['b']=27,['c']=28,['d']=29,['e']=30,['f']=31,
+		['g']=32,['h']=33,['i']=34,['j']=35,['k']=36,['l']=37,['m']=38,['n']=39,
+		['o']=40,['p']=41,['q']=42,['r']=43,['s']=44,['t']=45,['u']=46,['v']=47,
+		['w']=48,['x']=49,['y']=50,['z']=51,['0']=52,['1']=53,['2']=54,['3']=55,
+		['4']=56,['5']=57,['6']=58,['7']=59,['8']=60,['9']=61,['+']=62,['/']=63
+	};
+
+	size_t wl = wcslen(enc);
+	size_t bl = wl * 4 + 1;
+	char *nb = malloc(bl);
+	if (!nb) return NULL;
+	mbstowcs(NULL, NULL, 0); /* reset state */
+	wcstombs(nb, enc, bl);
+
+	int len = 0;
+	for (int i = 0; nb[i]; i++) {
+		if (nb[i] == '=' || nb[i] == '\r' || nb[i] == '\n') break;
+		len++;
+	}
+
+	int pad = (nb[len-1] == '=') + (nb[len-2] == '=');
+	int out_size = (len * 3) / 4 - pad;
+	unsigned char *db = malloc(out_size + 1);
+	if (!db) {
+		free(nb);
+		return NULL;
+	}
+
+	int j = 0;
+	for (int i = 0; i < len; i += 4) {
+		int v = (t[(unsigned char)nb[i]]   << 18) +
+		        (t[(unsigned char)nb[i+1]] << 12) +
+		        (t[(unsigned char)nb[i+2]] << 6)  +
+		         t[(unsigned char)nb[i+3]];
+		db[j++] = (v >> 16) & 0xFF;
+		if (nb[i+2] != '=') db[j++] = (v >> 8) & 0xFF;
+		if (nb[i+3] != '=') db[j++] = v & 0xFF;
+	}
+	db[out_size] = 0;
+
+	free(nb);
+
+	size_t wc_needed = mbstowcs(NULL, (char*)db, 0) + 1;
+	wchar_t *out = malloc(wc_needed * sizeof(wchar_t));
+	if (!out) {
+		free(db);
+		return NULL;
+	}
+	mbstowcs(out, (char*)db, wc_needed);
+	free(db);
+	return out;
+}
+
+void dis_raw(struct termios *original) {
+    struct termios raw = *original;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void en_raw(struct termios *original) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, original);
+}
+
+int get_keypress(void)
+{
+	/* getchar() without echo and Return */
+	struct termios original;
+	int ch;
+	tcgetattr(STDIN_FILENO, &original);
+	dis_raw(&original);
+	ch = getchar(); // get char in new terminal and switch back to old
+	en_raw(&original);
+	return ch;
+}
+
+
+/* Utils: scheduling */
 float get_d_init(int G) 
 {
     float d_init = w[4] - exp(w[5] * G) + 1;
@@ -120,6 +245,434 @@ float get_D(float D, int G)
     return D_new;
 }
 
+int play_audio(char *audio)
+{
+	// execlp() and not system() because safer
+	pid_t pid = fork();
+	if (pid == -1) {
+		perror("Failed to fork");
+		return 1;
+	}
+
+	if (pid == 0) {
+		int dev_null = open("/dev/null", O_WRONLY);
+		if (dev_null == -1) {
+			perror("Failed to open /dev/null");
+			return 1;
+		}
+		dup2(dev_null, STDOUT_FILENO);
+		close(dev_null);
+
+		char filepath[128];
+		snprintf(filepath, sizeof(filepath), "%s%s%s%s",
+				getenv("HOME"), ccq_dirpath, "media/", audio);
+		execlp("mpv", "mpv", filepath, (char *)NULL);
+		perror("Failed to execute mpv");
+		return 1;
+	} else {
+		int status;
+		if (waitpid(pid, &status, 0) == -1) {
+			perror("Failed to wait for child mpv process");
+			return 1;
+		}
+
+		//        waitpid(pid, &status, WNOHANG);
+		//        the above would cause to exit early
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+			return 0;
+		} else {
+			fprintf(stderr, "Exited audio playback with error\n");
+			return 1;
+		}
+	}
+}
+
+wchar_t *sanitize(char *input)
+{
+	char *sanitized = malloc(128);
+	if (!sanitized) {
+		perror("Memory allocation error for sanitized filepath");
+		return NULL;
+	}
+
+	for (int i = 0, j = 0; input[i] != '\0' && j < 127; ++i) {
+		if (isalnum(input[i]) || input[i] == '.' || input[i] == '/' || input[i] == '_' ||
+				input[i] == '-') {
+			sanitized[j++] = input[i];  // increment j AFTER using it
+		} else {
+			printf("File path %s has dangerous character: [%c]. ", input, input[i]);
+			printf("File skipped...\n");
+			free(sanitized);
+			return NULL;
+		}
+		if (input[i+1] == '\0') {
+			sanitized[j] = '\0';
+		}
+	}
+
+	return (wchar_t *)sanitized;
+}
+
+int render_image(char *image)
+{
+	// TO BE IMPLEMENTED: feh/sixel logic
+	// system() and not execlp() because sixel needs a separate shell
+	// sanitize() prevents shell injections
+	wchar_t *safe_image = sanitize(image);
+	if (safe_image == NULL) {
+		return 1;
+	}
+
+	char filepath[128];
+	snprintf(filepath, sizeof(filepath), "%s%s%ls",
+			getenv("HOME"), media_dirpath, safe_image);
+	char command[256];
+	snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-",
+			filepath); // this does not work on macOS
+
+	int result = system(command);
+	free(safe_image);
+
+	if (result == -1) {
+		perror("Failed to execute command");
+		return 1;
+	}
+	return 0;
+}
+
+wchar_t **itr_tok(wchar_t *s, char *d)
+{
+        /*
+         * iterative tokeniser for wide strings
+         * returns wchar_t** (NULL-terminated)
+         */
+
+        size_t dl = strlen(d);
+        wchar_t *wd = malloc((dl + 1) * sizeof(wchar_t));
+        if (!wd) return NULL;
+        mbstowcs(wd, d, dl + 1);
+
+        wchar_t **ra = NULL;
+        wchar_t *save, *tok;
+        int c = 0;
+
+        tok = wcstok(s, wd, &save);
+        while (tok) {
+                wchar_t **tmp = realloc(ra, sizeof(wchar_t*) * (c + 2));
+                if (!tmp) {
+                        free(ra);
+                        free(wd);
+                        return NULL;
+                }
+                ra = tmp;
+                ra[c] = wcsdup(tok);
+                c++;
+                ra[c] = NULL;
+                tok = wcstok(NULL, wd, &save);
+        }
+
+        free(wd);
+        return ra;
+}
+
+
+
+Entry parse(wchar_t *s)
+{
+	Entry e;
+	wchar_t **f = itr_tok(s, "|");
+
+	e.k = wcsdup(f[0]);
+
+	{
+		wchar_t **x = itr_tok(f[1], ",");
+		int c = 0; while (x[c]) c++;
+		e.rds = malloc((c + 1) * sizeof(wchar_t*));
+		for (int i = 0; i < c; i++) e.rds[i] = dc64(x[i]);
+		e.rds[c] = NULL;
+	}
+
+	{
+		wchar_t **x = itr_tok(f[2], ",");
+		int c = 0; while (x[c]) c++;
+		e.defs = malloc((c + 1) * sizeof(wchar_t*));
+		for (int i = 0; i < c; i++) e.defs[i] = dc64(x[i]);
+		e.defs[c] = NULL;
+	}
+
+	e.audio_arr = itr_tok(f[3], ",");
+	e.img_arr   = itr_tok(f[4], ",");
+
+	{
+		wchar_t **x = itr_tok(f[5], ",");
+		int c = 0; while (x[c]) c++;
+		e.sntn_arr = malloc((c + 1) * sizeof(wchar_t*));
+		for (int i = 0; i < c; i++) e.sntn_arr[i] = dc64(x[i]);
+		e.sntn_arr[c] = NULL;
+	}
+
+	{
+		wchar_t **x = itr_tok(f[6], ",");
+		e.schdl.state = wcstol(x[0], NULL, 10);
+		e.schdl.D     = wcstof(x[1], NULL);
+		e.schdl.S     = wcstof(x[2], NULL);
+		e.schdl.R     = wcstof(x[3], NULL);
+		e.schdl.last  = wcstol(x[4], NULL, 10);
+		e.schdl.due   = wcstol(x[5], NULL, 10);
+	}
+
+	e.pos_arr = NULL;
+	return e;
+}
+
+wchar_t *write(Entry e)
+{
+	wchar_t *buf = malloc(1024*sizeof(wchar_t));
+	if(!buf) return NULL;
+	buf[0]=0;
+	{
+		wcscat(buf,e.k);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[512]; tmp[0]=0;
+		for(int i=0;e.rds && e.rds[i];i++){
+			wchar_t *enc = ec64(e.rds[i]);
+			wcscat(tmp,enc); free(enc);
+			if(e.rds[i+1]) wcscat(tmp,L",");
+		}
+		wcscat(buf,tmp);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[512]; tmp[0]=0;
+		for(int i=0;e.defs && e.defs[i];i++){
+			wchar_t *enc = ec64(e.defs[i]);
+			wcscat(tmp,enc); free(enc);
+			if(e.defs[i+1]) wcscat(tmp,L",");
+		}
+		wcscat(buf,tmp);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[512]; tmp[0]=0;
+		for(int i=0;e.audio_arr && e.audio_arr[i];i++){
+			wcscat(tmp,e.audio_arr[i]);
+			if(e.audio_arr[i+1]) wcscat(tmp,L",");
+		}
+		wcscat(buf,tmp);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[512]; tmp[0]=0;
+		for(int i=0;e.img_arr && e.img_arr[i];i++){
+			wcscat(tmp,e.img_arr[i]);
+			if(e.img_arr[i+1]) wcscat(tmp,L",");
+		}
+		wcscat(buf,tmp);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[512]; tmp[0]=0;
+		for(int i=0;e.sntn_arr && e.sntn_arr[i];i++){
+			wchar_t *enc = ec64(e.sntn_arr[i]);
+			wcscat(tmp,enc); free(enc);
+			if(e.sntn_arr[i+1]) wcscat(tmp,L",");
+		}
+		wcscat(buf,tmp);
+		wcscat(buf,L"|");
+	}
+	{
+		wchar_t tmp[64];
+		swprintf(tmp,64,L"%d,%f,%f,%f,%d,%d", e.schdl.state, e.schdl.D, e.schdl.S, e.schdl.R, e.schdl.last, e.schdl.due);
+		wcscat(buf,tmp);
+	}
+	return buf;
+}
+
+char *ask_user(void)
+{
+	wprintf(L"Enter deck name: ");
+	fflush(stdout);
+	wchar_t buf[256] = {0};
+	fgetws(buf, sizeof(buf) / sizeof(buf[0]), stdin);
+	buf[wcslen(buf) - 1] = L'\0';
+	wchar_t *r = wcsdup(buf);
+	r = sanitize(r);
+	return r;
+}
+
+wchar_t *interactive(wchar_t *text)
+{
+	wchar_t *selection;
+	/* implement the whole logic
+	 * to print a wchar line (input) and let user select a string (output)
+	 * highlighting the cursor and selection with ansi esc sequences */
+	return selection;
+}
+
+
+void print(Entry c)
+{
+	printf("[k]%ls\n[r]%ls\n[d]%ls\n", c.k, c.rds[0], c.defs[0], c.sinfo.sntns[0]);
+	play_audio(c.audio_arr[0]);
+	render_image(c.img_arr[0]);
+}
+
+void phelp(char *prog_name)
+{
+	printf("Usage: %s flag <argument>\n", prog_name);
+	printf("\t-a <key>\n");
+	printf("\t-d <key>\n");
+	printf("\t-r <deck>\n");
+	printf("\t-s <key>\n");
+	printf("\t<text>\n");
+	printf("\n");
+	printf("For more detailed information see man ccq\n");
+}
+
+/* Essential functions */ 
+void create(wchar_t *key)
+{
+	char *deck = ask_user(); // sanitized in function
+	char filepath[256];
+	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
+	FILE *d = fopen(filepath, "w");
+	if (!d) {
+		fprintf(stderr, "Deck open error at %s\n", filepath);
+		return;
+	}
+	if (bsearch(key, deck)) {
+		fprintf(stderr, "Card [%ls] already exists\n", key);
+		return;
+	}
+	if (char *line_match = bsearch(key, db)) {
+		fprintf(stderr, "Card [%ls] not found in dictionaries\n", key);
+		return;
+	}
+	
+	Entry newc = parse(line_match);
+	if (newc.sinfo.files)
+		newc.sinfo.sntns = search_corpus(newc.sinfo.files, newc.sinfo.bytes);
+	newc.schdl = first_sch();
+}
+
+void delete(wchar_t *key)
+{
+	char *deck = ask_user();
+	char filepath[256];
+	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
+	FILE *d = fopen(filepath, "w");
+	if (!d) {
+		fprintf(stderr, "Deck open error at %s\n", filepath);
+		return;
+	}
+	if (!(char *line_match = bsearch(key, deck))) {
+		fprintf(stderr, "Card [%ls] does not exist\n", key);
+		return;
+	}
+	Entry dlt_c = parse(line_match);
+	print(dlt_c);
+
+	printf("Press Enter to confirm deletion, any other key to exit\n");
+	int result = get_keypress();
+	if (result != '\n')
+		return;
+
+	/* logic to delete a line from the deck? and update config.h file 
+	 * which has the constants eg db size, deck size */
+
+}
+
+
+int compare_key(const void *key, const void *line)
+{
+	wchar_t *f = wcsdup(*(wchar_t**)line);
+	wchar_t *k = wcstok(f, L"|");
+	int res = wcscmp((wchar_t*)key, k);
+	free(f);
+	return res;
+}
+
+wchar_t *fsearch(wchar_t *k, wchar_t *fn, int n)
+{
+        /*
+         * searches for key in file,
+         * assumes sorted lines of entries formatted as
+         * key|other_field|...\n
+         * returns matched line if found
+         * NULL otherwise
+         */
+
+	char fp[256];
+	snprintf(fp, sizeof(fp), "%s%s%s", getenv("USER"), ccq_dirpath, (char*)fn);
+	FILE *f = fopen(fp, "r");
+	if (!f) {
+		return NULL;
+	}
+
+	wchar_t **ls = malloc(n * sizeof(wchar_t*));
+	wchar_t buf[1024], *r, *m;
+	int i = 0;
+
+	while (i < n && fgetws(buf, sizeof(buf) / sizeof(buf[0]), f)) {
+		size_t len = wcslen(buf);
+		if (len && buf[len - 1] == L'\n') {
+			buf[len - 1] = L'\0'; /* trim newline */
+		}
+		ls[i++] = wcsdup(buf);
+	}
+	fclose(f);
+
+	r = bsearch(&k, ls, i, sizeof(wchar_t*), compare_key);
+	if (r) {
+		m = wcsdup(*(wchar_t**)r);
+	} else {
+		m = NULL;
+	}
+
+	for (int j = 0; j < i; j++) {
+		free(ls[j]);
+	}
+	free(ls);
+
+	return m;
+}
+
+void search(wchar_t *key) // this retrieves deck card or db entry info for user
+{
+	bool card_exists = false;
+	wchar_t *deck_lmatch = fsearch(key, deck, deck_size);
+	if (deck_lmatch) {
+		card_exists = true;
+		printf("Deck match found:\n");
+		Entry deck_card = parse(deck_lmatch);
+		print(deck_card);
+	} else {
+		printf("No deck match\n");
+	}
+
+	wchar_t *db_lmatch = fsearch(key, db, db_size);
+	if (db_lmatch) {
+		printf("Deck match found:\n");
+		Entry db_entry = parse(db_lmatch);
+		print(db_entry);
+	} else {
+		printf("No db match\n");
+	}
+	if (!card_exists) {
+		printf("Do you want to add this card? Enter / exit\n");
+		int result = get_keypress();
+		if (result == '\n') {
+			/* HERE WRITE THE LOGIC TO CHANGE DECK FILE */
+		} else {
+			return;
+		}
+	}
+
+	return;
+}
+
 ScheduleInfo schedule(ScheduleInfo old_sch, int result)
 {
     ScheduleInfo scheduled_card = {0};
@@ -167,310 +720,14 @@ ScheduleInfo schedule(ScheduleInfo old_sch, int result)
     return scheduled_card;
 }
 
-void dis_raw(struct termios *original) {
-    struct termios raw = *original;
-    raw.c_lflag &= ~(ECHO | ICANON);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-}
-
-void en_raw(struct termios *original) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, original);
-}
-
-int get_keypress(void)
-{
-	/* function is same as getchar() but without
-	 * - echoing char
-	 * - requiring Return */
-	struct termios original;
-	int ch;
-	tcgetattr(STDIN_FILENO, &original);
-	dis_raw(&original);
-	ch = getchar(); // get char in new terminal and switch back to old
-	en_raw(&original);
-	return ch;
-}
-
-int play_audio(char *audio)
-{
-	// execlp() and not system() because safer
-	pid_t pid = fork();
-	if (pid == -1) {
-		perror("Failed to fork");
-		return 1;
-	}
-
-	if (pid == 0) {
-		int dev_null = open("/dev/null", O_WRONLY);
-		if (dev_null == -1) {
-			perror("Failed to open /dev/null");
-			return 1;
-		}
-		dup2(dev_null, STDOUT_FILENO);
-		close(dev_null);
-
-		char filepath[128];
-		snprintf(filepath, sizeof(filepath), "%s%s%s%s",
-				getenv("HOME"), ccq_dirpath, "media/", audio);
-		execlp("mpv", "mpv", filepath, (char *)NULL);
-		perror("Failed to execute mpv");
-		return 1;
-	} else {
-		int status;
-		if (waitpid(pid, &status, 0) == -1) {
-			perror("Failed to wait for child mpv process");
-			return 1;
-		}
-
-		//        waitpid(pid, &status, WNOHANG);
-		//        the above would cause to exit early
-		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-			return 0;
-		} else {
-			fprintf(stderr, "Exited audio playback with error\n");
-			return 1;
-		}
-	}
-}
-
-char *sanitize(char *input)
-{
-	char *sanitized = malloc(128);
-	if (!sanitized) {
-		perror("Memory allocation error for sanitized filepath");
-		return NULL;
-	}
-
-	for (int i = 0, j = 0; input[i] != '\0' && j < 127; ++i) {
-		if (isalnum(input[i]) || input[i] == '.' || input[i] == '/' || input[i] == '_' ||
-				input[i] == '-') {
-			sanitized[j++] = input[i];  // increment j AFTER using it
-		} else {
-			printf("File path %s has dangerous character: [%c]. ", input, input[i]);
-			printf("File skipped...\n");
-			free(sanitized);
-			return NULL;
-		}
-		if (input[i+1] == '\0') {
-			sanitized[j] = '\0';
-		}
-	}
-
-	return sanitized;
-}
-
-int render_image(char *image)
-{
-	// TO BE IMPLEMENTED: feh/sixel logic
-	// system() and not execlp() because sixel needs a separate shell
-	// sanitize() prevents shell injections
-	char *safe_image = sanitize(image);
-	if (safe_image == NULL) {
-		return 1;
-	}
-
-	char filepath[128];
-	snprintf(filepath, sizeof(filepath), "%s%s%s%s",
-			getenv("HOME"), ccq_dirpath, "media/", safe_image);
-	char command[256];
-	snprintf(command, sizeof(command), "magick '%s' -resize 400x400\\> sixel:-",
-			filepath); // this does not work on macOS
-
-	int result = system(command);
-	free(safe_image);
-
-	if (result == -1) {
-		perror("Failed to execute command");
-		return 1;
-	}
-	return 0;
-}
-
-wchar_t **itr_tok(wchar_t *string, char *delimiter)
-{
-	wchar_t **r_arr;
-	return r_arr;
-}
-
-wchar_t *db64(wchar_t *encoded)
-{
-	wchar_t *decoded;
-	return decoded;
-}
-
-wchar_t **parse_sntns(char *sntn_raw)
-{
-	/*
-	 * input expected to be
-	 * b64,...
-	 */
-	wchar_t **s = itr_tok(sntn_raw, ",");
-	int n = NELEMS(s);
-	for (int i = 0; i < n; i++) {
-		s[i] = db64(s[i]);
-	}
-	return s;
-}
-
-wchar_t **parse_fps(char *fp_raw)
-{
-	wchar_t **fn = itr_tok(fp_raw, ",");
-	int n = NELEMS(fn);
-	int buffer = 256;
-
-	char *new_fp = malloc(buffer * sizeof(char));
-	wchar_t **fp_arr = malloc(n * sizeof (wchar_t*));
-	for (int i = 0; i < n; i++) {
-		fp_arr[i] = malloc(buffer * sizeof(char));
-	}
-
-	for (int i = 0; i < n; i++) {
-		new_fp = "\0";
-		snprintf(new_fp, sizeof(new_fp), "%s%s%s", getenv("USER"), media_dirpath, fn[i]);
-		fp_arr[i] = strdup(new_fp);
-	}
-	
-	return fp_arr;
-}
-
-wchar_t **parse_rds(wchar_t *rd_raw)
-{
-	/* parses a raw ccq reading into a plain wchar** 
-	 * the format expected is:
-	 * b64,b64,... */
-	wchar_t **rd_arr = itr_tok(rd_raw, ",");
-
-	int n = (int)NELEMS(rd_arr);
-
-	for (int i = 0; i < n; i++) {
-		rd_arr[i] = db64(rd_arr[i]); /* the decoder has its own sanitize call */
-	}
-
-	return rd_arr;
-}
-
-wchar_t ***parse_defs(wchar_t *def_raw)
-{
-	/* parses a raw ccq definition into plain wchar**
-	 * the format expected is:
-	 * b64,b64,b64;b64,b64,b64;... 
-	 * standing for "reading,dictionary, definition" */
-
-	wchar_t **def_arr = itr_tok(def_raw, ";");
-	int n = (int)NELEMS(def_arr);
-
-	
-	wchar_t *ccq_df[n][3];
-	for (int i = 0; i < n; ++i) {
-		for (int j = 0; j < 3; j) {
-			/* gets a[0] reading, a[1] dictionary name, a[2] definition */
-			wchar_t *tok = strdup((wchar_t*)strtok(def_arr[i]), ',');
-			ccq_df[i][j] = db64(tok);
-		}
-	}
-
-
-	return ccq_df;
-}
-
-Entry parse_deck(char *s)
-{
-	/*
-	 * parses ccq formatted decks, as below:
-	 * key|pinyin_b64|defs_b64|audio_arr|image_arr|filename-offset,...|schedulingfloats
-	 * */
-
-	Entry r;
-
-	/* key in plain text */
-	r.k = strdup((wchar_t*)strtok(s, "|"));
-
-	/* array of pinyin strings in b64 */
-	wchar_t *rd_raw = strdup((wchar_t*)strtok(NULL, "|"));
-	r.rds = parse_rds(rd_raw);
-
-	/* array of hanzi strings in b64 */
-	wchar_t *def_raw = strdup((wchar_t*)strtok(NULL, "|"));
-	r.defs = parse_defs(def_raw);
-
-	/* array of audio filenames plaintext */
-	wchar_t *ofp_raw = strdup((wchar_t*)strtok(NULL, "|"));
-	r.audio_arr = parse_fps(ofp_raw);
-
-	/* array of image filenames plaintext */
-	wchar_t *ifp_raw = strdup((wchar_t*)strtok(NULL, "|"));
-	r.img_arr = parse_fps(ifp_raw);
-
-	/* array of hanzi strings in b64 */
-	wchar_t *sntn_raw = strdup((wchar_t*)strtok(NULL, "|"));
-	r.sinfo.sntns = parse_sntns(sntn_raw);
-
-	return r;
-
-}
-
-wchar_t *interactive(wchar_t *text)
-{
-	wchar_t *selection;
-	return selection;
-}
-
-
-void print(Entry c)
-{
-	printf("[k]%ls\n[r]%ls\n[d]%ls\n", c.k, c.rds[0], c.defs[0], c.sinfo.sntns[0]);
-	play_audio(c.audio_arr[0]);
-	render_image(c.img_arr[0]);
-}
-
-void phelp(char *prog_name)
-{
-	printf("Usage: %s flag <argument>\n", prog_name);
-	printf("\t-a <key>\n");
-	printf("\t-d <key>\n");
-	printf("\t-r <deck>\n");
-	printf("\t-s <key>\n");
-	printf("\t<text>\n");
-	printf("\n");
-	printf("For more detailed information see man ccq\n");
-}
-
-
-/* Essential functions */ 
-void create(wchar_t *key)
-{
-	// ask user for deck name
-	// bsearch(deck) if not NULL return error
-	// bsearch(db) if NULL return error
-	// Entry newc = parse_db(char *db_match_line)
-	// if (newc.sinfo.books)
-	//	newc.sinfo.sentences = search_corpus(newc.sinfo);
-	// else print_warning("no sentences found")
-	// newc.scheduler = first_sch();
-}
-
-void delete(wchar_t *key)
-{
-	// ask user for deck name
-	// bsearch(deck) if NULL return error, exit 
-	// parse_deck(line)
-	// print(card)
-	// get_keypress() y or n(exit)
-	// remove line in file
-}
-
-void search(wchar_t *key)
-{
-	// ask user for deck name
-	// bsearch(deck) if not NULL parse, print
-	// bsearch(db) if not NULL parse, print
-	// if (db) search_corpus(parsed_info);
-	// exit
-}
-
 
 void review(char *deck)
 {
+	/* 
+	 * First goes through deck to get count of due cards
+	 * Then goes through deck again to gather the lines
+	 * Prints, gets user key press, schedules
+	 * */
 	FILE *d = fopen("deck", "r");
 	if (!d)
 		fprintf(stderr, "Deck open error\n");
@@ -540,7 +797,7 @@ void review(char *deck)
 
 		int date = atoi(strrchr(line, '|') + 1);
 		if (date < today) {
-			Entry due_card = parse_deck(line);
+			Entry due_card = parse(line);
 			while (1) {
 				result = get_keypress();
 				if (result == '\n' || result == 'f' || result == 'F') {
