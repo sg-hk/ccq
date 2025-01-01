@@ -16,36 +16,6 @@
 
 #define NELEMS(array) (sizeof(array) / sizeof((array)[0]))
 
-/* 
- * CONSTANTS
- */
-
-
-const char *ccq_dirpath = "/.local/share/ccq/";
-const char *db_fpath = "/.local/share/ccq/dictionary_masterfile";
-const char *media_dirpath = "/.local/share/ccq/media/";
-
-const char *deck = "main";
-const int deck_size = 500;
-const char *db = "dictionary_masterfile";
-const int db_size = 888888;
-
-const float factor = 19.0/81.0; // fsrs factor
-const float decay = -0.5; // fsrs decay
-
-
-const float w[] =
-{
-	0.4177, 0, 0.9988, 0, // initial stability for grades A/H/G/E
-	7.1949, 0.5345, 1.4604,
-	0.0046, 1.54575, 0.1192, 1.01925, 1.9395, 0.11, 0.29605,
-	2.2698, 0.2315, 2.9898, 0.51655, 0.6621
-};
-
-/* 
- * STRUCTS
- */
-
 typedef struct SchNum {
 	int state;
 	float D, S, R;
@@ -63,15 +33,30 @@ typedef struct Entry {
 	SchNum schdl;
 } Entry;
 
-
 /*
  * FUNCTIONS
  */
 
-
 /* Utils: general */
+
+int compare_key(const void *key, const void *line)
+{
+	/*
+	 * used in bsearch and qsort 
+	 */
+
+	wchar_t *f = wcsdup(*(wchar_t**)line);
+	wchar_t *k = wcstok(f, L"|");
+	int res = wcscmp((wchar_t*)key, k);
+	free(f);
+	return res;
+}
+
 wchar_t *ec64(wchar_t *p)
 {
+	/*
+	 * encodes wchar_t * to wchar_t * base 64
+	 */
 	static char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	size_t sl = wcslen(p), ml = sl * 4 + 1;
 	char *mb = malloc(ml), *outb;
@@ -108,8 +93,7 @@ wchar_t *ec64(wchar_t *p)
 wchar_t *dc64(wchar_t *enc)
 {
 	/*
-	 * takes wide b64 input
-	 * returns wide decoded output
+	 * decodes wchar_t * base 64 input as wchar_t * plain text
 	 */
 
 	static int t[256] = { 
@@ -191,7 +175,6 @@ int get_keypress(void)
 	return ch;
 }
 
-
 /* Utils: scheduling */
 float get_d_init(int G) 
 {
@@ -258,7 +241,7 @@ int play_audio(char *audio)
 		int dev_null = open("/dev/null", O_WRONLY);
 		if (dev_null == -1) {
 			perror("Failed to open /dev/null");
-			return 1;
+			exit(1);
 		}
 		dup2(dev_null, STDOUT_FILENO);
 		close(dev_null);
@@ -268,7 +251,7 @@ int play_audio(char *audio)
 				getenv("HOME"), ccq_dirpath, "media/", audio);
 		execlp("mpv", "mpv", filepath, (char *)NULL);
 		perror("Failed to execute mpv");
-		return 1;
+		exit(1);
 	} else {
 		int status;
 		if (waitpid(pid, &status, 0) == -1) {
@@ -374,8 +357,6 @@ wchar_t **itr_tok(wchar_t *s, char *d)
         free(wd);
         return ra;
 }
-
-
 
 Entry parse(wchar_t *s)
 {
@@ -504,17 +485,61 @@ char *ask_user(void)
 
 wchar_t *interactive(wchar_t *text)
 {
-	wchar_t *selection;
-	/* implement the whole logic
-	 * to print a wchar line (input) and let user select a string (output)
-	 * highlighting the cursor and selection with ansi esc sequences */
-	return selection;
-}
+	int len = wcslen(text);
+	int start = -1, end = -1, pos = 0;
+	wchar_t *selection = NULL;
 
+	while (1) {
+		/* Clear screen and print the text with cursor position */
+		printf("\033[H\033[J"); // Clear screen
+		for (int i = 0; i < len; i++) {
+			if (i == pos) {
+				printf("\033[7m%lc\033[0m", text[i]); /* Highlight cursor position */
+			} else if (start != -1 && i >= start && i <= end) {
+				printf("\033[4m%lc\033[0m", text[i]); /* Underline selection */
+			} else {
+				printf("%lc", text[i]);
+			}
+		}
+		printf("\n");
+
+		int ch = get_keypress();
+		if (ch == 'v') {
+			if (start == -1) {
+				start = pos;
+				end = pos;
+			} else {
+				end = pos;
+			}
+		} else if (ch == '\n') {
+			if (start != -1 && end != -1) {
+				int sel_len = end - start + 1;
+				selection = malloc((sel_len + 1) * sizeof(wchar_t));
+				if (!selection) {
+					perror("Memory allocation error for selection");
+					return NULL;
+				}
+				wcsncpy(selection, text + start, sel_len);
+				selection[sel_len] = L'\0';
+				return selection;
+			}
+		} else if (ch == 27) { // Escape sequence
+			get_keypress(); // Skip [
+			ch = get_keypress();
+			if (ch == 'C' && pos < len - 1) { // Right arrow
+				pos++;
+			} else if (ch == 'D' && pos > 0) { // Left arrow
+				pos--;
+			}
+		} else {
+			return NULL;
+		}
+	}
+}
 
 void print(Entry c)
 {
-	printf("[k]%ls\n[r]%ls\n[d]%ls\n", c.k, c.rds[0], c.defs[0], c.sinfo.sntns[0]);
+	printf("[k]%ls\n[r]%ls\n[d]%ls\n", c.k, c.rds[0], c.defs[0], c.sntn_arr[0]);
 	play_audio(c.audio_arr[0]);
 	render_image(c.img_arr[0]);
 }
@@ -529,69 +554,6 @@ void phelp(char *prog_name)
 	printf("\t<text>\n");
 	printf("\n");
 	printf("For more detailed information see man ccq\n");
-}
-
-/* Essential functions */ 
-void create(wchar_t *key)
-{
-	char *deck = ask_user(); // sanitized in function
-	char filepath[256];
-	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
-	FILE *d = fopen(filepath, "w");
-	if (!d) {
-		fprintf(stderr, "Deck open error at %s\n", filepath);
-		return;
-	}
-	if (bsearch(key, deck)) {
-		fprintf(stderr, "Card [%ls] already exists\n", key);
-		return;
-	}
-	if (char *line_match = bsearch(key, db)) {
-		fprintf(stderr, "Card [%ls] not found in dictionaries\n", key);
-		return;
-	}
-	
-	Entry newc = parse(line_match);
-	if (newc.sinfo.files)
-		newc.sinfo.sntns = search_corpus(newc.sinfo.files, newc.sinfo.bytes);
-	newc.schdl = first_sch();
-}
-
-void delete(wchar_t *key)
-{
-	char *deck = ask_user();
-	char filepath[256];
-	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
-	FILE *d = fopen(filepath, "w");
-	if (!d) {
-		fprintf(stderr, "Deck open error at %s\n", filepath);
-		return;
-	}
-	if (!(char *line_match = bsearch(key, deck))) {
-		fprintf(stderr, "Card [%ls] does not exist\n", key);
-		return;
-	}
-	Entry dlt_c = parse(line_match);
-	print(dlt_c);
-
-	printf("Press Enter to confirm deletion, any other key to exit\n");
-	int result = get_keypress();
-	if (result != '\n')
-		return;
-
-	/* logic to delete a line from the deck? and update config.h file 
-	 * which has the constants eg db size, deck size */
-
-}
-
-
-int compare_key(const void *key, const void *line)
-{
-	wchar_t *f = wcsdup(*(wchar_t**)line);
-	wchar_t *k = wcstok(f, L"|");
-	int res = wcscmp((wchar_t*)key, k);
-	free(f);
-	return res;
 }
 
 wchar_t *fsearch(wchar_t *k, wchar_t *fn, int n)
@@ -639,7 +601,99 @@ wchar_t *fsearch(wchar_t *k, wchar_t *fn, int n)
 	return m;
 }
 
-void search(wchar_t *key) // this retrieves deck card or db entry info for user
+/* Essential functions */ 
+void create(wchar_t *key)
+{
+	char *deck = ask_user(); // sanitized in function
+	char filepath[256];
+	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
+	FILE *d = fopen(filepath, "w");
+	if (!d) {
+		fprintf(stderr, "Deck open error at %s\n", filepath);
+		return;
+	}
+	if (bsearch(key, deck)) {
+		fprintf(stderr, "Card [%ls] already exists\n", key);
+		return;
+	}
+	if (char *line_match = bsearch(key, db)) {
+		fprintf(stderr, "Card [%ls] not found in dictionaries\n", key);
+		return;
+	}
+	
+	Entry newc = parse(line_match);
+	if (newc.pos_arr)
+		newc.sntn_arr = search_corpus(newc.pos_arr);
+	newc.schdl = first_sch();
+}
+
+void delete(wchar_t *key)
+{
+	char *deck = ask_user();
+	char filepath[256];
+	snprintf(filepath, sizeof(filepath), "%s%s%s", getenv("USER"), ccq_dirpath, deck);
+	FILE *d = fopen(filepath, "w");
+	if (!d) {
+		fprintf(stderr, "Deck open error at %s\n", filepath);
+		return;
+	}
+
+	char **line = search(key, deck); // search returns array: line [0], position[1]
+	if (!line) {
+		fprintf(stderr, "[%ls] not in deck [%s]. Exiting...\n", key, deck)
+		exit(EXIT_FAILURE);
+	}
+	fclose(d);
+
+	char *match = sanitize(line[0]);
+	int count = atoi(line[1]);
+	printf("[%ls] found as entry number [%d] in [%s]\n", key, count, deck);
+	printf("[d]elete, [e]xit, [s]how\n");
+	int result = get_keypress();
+	if (result == 'd') {
+
+if (result == 'd') {
+	FILE *orig = fopen(filepath, "r");
+	if (!orig) {
+		fprintf(stderr, "Could not reopen file for reading.\n");
+		return;
+	}
+	char tmp[256];
+	snprintf(tmp, sizeof(tmp), "%s.tmp", filepath);
+	FILE *temp = fopen(tmp, "w+");
+	if (!temp) {
+		fclose(orig);
+		fprintf(stderr, "Could not create temp file.\n");
+		return;
+	}
+	int ln = 0;
+	char buf[2048];
+	while (fgets(buf, sizeof(buf), orig) != NULL) {
+		for (;ln != count; ++ln)
+			fputs(buf, temp);
+	}
+	fclose(orig);
+	fclose(temp);
+	remove(filepath);
+	rename(tmp, filepath);
+
+	deck_size =- 1;
+	/* later add update config.h logic here */
+
+	printf("Deleted entry %d from deck.\n", count);
+	exit(EXIT_SUCCESS);
+}
+	} else if (result == 'e') {
+		printf("User aborted. Exiting...\n");
+		exit(EXIT_SUCCESS);
+	} else if (result == 's') {
+		Entry res = parse(match);
+		print(res);
+		exit(EXIT_SUCCESS);
+	}
+}
+
+void search(wchar_t *key) // this retrieves deck/db info
 {
 	bool card_exists = false;
 	wchar_t *deck_lmatch = fsearch(key, deck, deck_size);
@@ -673,53 +727,52 @@ void search(wchar_t *key) // this retrieves deck card or db entry info for user
 	return;
 }
 
-ScheduleInfo schedule(ScheduleInfo old_sch, int result)
+SchNum schedule(SchNum old_sch, int result) // reschedules based on result
 {
-    ScheduleInfo scheduled_card = {0};
+    SchNum scheduled = {0};
     int G = result == '\n' ? 2 : 0; // only grades 0 ("again") and 2 ("good")
     int now = (int)time(NULL);
     float days_since = old_sch.last != 0 ? (now - old_sch.last) / 86400 : 0; // 0 if new
     float finterval = 0;
 
-    scheduled_card.last = now;
+    scheduled.last = now;
 
     if (old_sch.state == 0) { // new
-        scheduled_card.state = 1;
-        scheduled_card.D = get_d_init(G);
-        scheduled_card.S = w[G];
-        scheduled_card.R = 1.0;
-        scheduled_card.due = now + 86400;
+        scheduled.state = 1;
+        scheduled.D = get_d_init(G);
+        scheduled.S = w[G];
+        scheduled.R = 1.0;
+        scheduled.due = now + 86400;
     } else if (old_sch.state == 1 && result != '\n') { // young failed
-        scheduled_card.D = get_D(old_sch.D, G);
-        scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R); // _recall not _forget bc young
-        scheduled_card.R = get_R(days_since, old_sch.S);
-        scheduled_card.due = now + 86400;
+        scheduled.D = get_D(old_sch.D, G);
+        scheduled.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R); // _recall not _forget bc young
+        scheduled.R = get_R(days_since, old_sch.S);
+        scheduled.due = now + 86400;
     } else if (old_sch.state == 1 && result == '\n') { // young pass
-        scheduled_card.state = 2;
-        scheduled_card.D = get_D(old_sch.D, G);
-        scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
-        scheduled_card.R = get_R(days_since, old_sch.S);
-        finterval = get_new_interval(scheduled_card.S);
-        scheduled_card.due = now + round(finterval);
+        scheduled.state = 2;
+        scheduled.D = get_D(old_sch.D, G);
+        scheduled.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
+        scheduled.R = get_R(days_since, old_sch.S);
+        finterval = get_new_interval(scheduled.S);
+        scheduled.due = now + round(finterval);
     } else if (old_sch.state == 2 && result != '\n') { // mature failed
-        scheduled_card.state = 1;
-        scheduled_card.D = get_D(old_sch.D, G);
-        scheduled_card.S = get_forget_S(old_sch.D, old_sch.S, old_sch.R);
-        scheduled_card.R = get_R(days_since, old_sch.S);
-        scheduled_card.due = now + 86400;
+        scheduled.state = 1;
+        scheduled.D = get_D(old_sch.D, G);
+        scheduled.S = get_forget_S(old_sch.D, old_sch.S, old_sch.R);
+        scheduled.R = get_R(days_since, old_sch.S);
+        scheduled.due = now + 86400;
     } else if (old_sch.state == 2 && result == '\n') { // mature pass
-        scheduled_card.D = get_D(old_sch.D, G);
-        scheduled_card.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
-        scheduled_card.R = get_R(days_since, old_sch.S);
-        finterval = get_new_interval(scheduled_card.S);
-        scheduled_card.due = now + round(finterval);
+        scheduled.D = get_D(old_sch.D, G);
+        scheduled.S = get_recall_S(old_sch.D, old_sch.S, old_sch.R);
+        scheduled.R = get_R(days_since, old_sch.S);
+        finterval = get_new_interval(scheduled.S);
+        scheduled.due = now + round(finterval);
     } else {
 	    fprintf(stderr, "Mistake in card scheduling\n");
     }
 
-    return scheduled_card;
+    return scheduled;
 }
-
 
 void review(char *deck)
 {
@@ -802,7 +855,7 @@ void review(char *deck)
 				result = get_keypress();
 				if (result == '\n' || result == 'f' || result == 'F') {
 					print(due_card);
-					schedule(due_card, deck);
+					schedule(due_card.schdl, deck);
 					break;
 				} else
 					printf("Input unrecognized. Please press Enter of F\n");
@@ -812,7 +865,6 @@ void review(char *deck)
 
 			
 }
-
 
 int main(int argc, char **argv)
 {
