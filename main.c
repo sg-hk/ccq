@@ -13,6 +13,7 @@ static const int PATH_MAX = 256;
 static const int DATE_LEN = 10;
 
 char getrawch(void);
+int to_utf8(uint32_t ch, char *out);
 
 int
 main(int argc, char *argv[])
@@ -56,6 +57,12 @@ main(int argc, char *argv[])
                         continue;
                 }
 
+                if (chars_read > MAX_READ) {
+                        fprintf(stderr, "line too long, skipping\n");
+                        chars_read = 0;
+                        continue;
+                }
+
                 line[chars_read + 1] = (uint32_t)'\0';
                 chars_read = 0; // reset for other line counts
 
@@ -94,8 +101,8 @@ main(int argc, char *argv[])
                 }
                 fronts[due_n][idx2] = (uint32_t)'\0';
 
-                /* now we have idx2 at | and idx at / 
-                 * and_we_want|THIS_FIELD|YYYY/ */
+                /* idx points to '/', idx2 points to '|'
+                 * back field is from idx2+1 to idx-6 (for |YYYY/) */
                 backs[due_n] = malloc(MAX_READ*sizeof(uint32_t));
                 if (!backs[due_n]) {perror("malloc backs[due]"); exit(1);}
                 for (int i = 0; i < (idx-(idx2+1)-6); ++i)
@@ -127,14 +134,19 @@ main(int argc, char *argv[])
 
         printf("QUIZ: enter if pass, any to fail\n");
         int *incr = malloc(due_n * sizeof(int));
-        char ch;
+        int len = 0;
+        char ch, utf8[4];
         for (int i = 0; i < due_n; ++i) {
-                for (int j = 0; fronts[i][j] != (uint32_t)'\0'; ++j)
-                        write(1, &fronts[i][j], sizeof(uint32_t));
+                for (int j = 0; fronts[i][j] != (uint32_t)'\0'; ++j) {
+                        len = to_utf8(fronts[i][j], utf8);
+                        write(1, utf8, len);
+                }
                 free(fronts[i]);
                 getrawch();
-                for (int j = 0; backs[i][j] != (uint32_t)'\0'; ++j)
-                        write(1, &backs[i][j], sizeof(uint32_t));
+                for (int j = 0; backs[i][j] != (uint32_t)'\0'; ++j) {
+                        len = to_utf8(backs[i][j], utf8);
+                        write(1, utf8, len);
+                }
                 free(backs[i]);
                 ch = getrawch();
                 incr[i] = (ch == '\n') ? 1 : 2;
@@ -184,7 +196,8 @@ main(int argc, char *argv[])
         exit(0);
 }
 
-char getrawch(void)
+char 
+getrawch(void)
 {
         struct termios old, new;
         char ch;
@@ -206,4 +219,32 @@ char getrawch(void)
                 {perror("tcsetattr"); exit(1);}
 
         return ch;
+}
+
+int 
+to_utf8(uint32_t ch, char *out)
+{
+    if (ch <= 0x7F) {
+        out[0] = (char)ch;
+        return 1;
+    } else if (ch <= 0x7FF) {
+        out[0] = (char)(0xC0 | ((ch >> 6) & 0x1F));
+        out[1] = (char)(0x80 | (ch & 0x3F));
+        return 2;
+    } else if (ch <= 0xFFFF) {
+        out[0] = (char)(0xE0 | ((ch >> 12) & 0x0F));
+        out[1] = (char)(0x80 | ((ch >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (ch & 0x3F));
+        return 3;
+    } else if (ch <= 0x10FFFF) {
+        out[0] = (char)(0xF0 | ((ch >> 18) & 0x07));
+        out[1] = (char)(0x80 | ((ch >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((ch >> 6) & 0x3F));
+        out[3] = (char)(0x80 | (ch & 0x3F));
+        return 4;
+    } else {
+        // Invalid Unicode code point
+        out[0] = '?';
+        return 1;
+    }
 }
