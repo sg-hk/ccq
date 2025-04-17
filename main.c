@@ -184,11 +184,11 @@ main(int argc, char *argv[])
                 ndate[2] = (nyear - ndate[0]*1000 - ndate[1]*100) / 10;
                 ndate[3] = nyear - ndate[0]*1000 - ndate[1]*100 - ndate[2]*10;
                 ndate[4] = (uint32_t)'/';
-                ndate[5] = nmonth / 10 ? nmonth / 10 : 0;
-                ndate[6] = nmonth - ndate[5];
+                ndate[5] = nmonth / 10;
+                ndate[6] = nmonth % 10;
                 ndate[7] = (uint32_t)'/';
-                ndate[8] = nday / 10 ? nday / 10 : 0;
-                ndate[9] = nday - ndate[8] * 10;
+                ndate[8] = nday / 10;
+                ndate[9] = nday % 10;
                 for (int i = 0; i < 10; ++i) {
                         if (i != 4 && i != 7) 
                                 ndate[i] += '0';
