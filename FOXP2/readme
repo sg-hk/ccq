@@ -1,0 +1,30 @@
+	introduction
+foxp2, or fox for short, is the study‑list editor for ccq (存储器).
+it reads the database, lets you add/change/delete cards by key,
+and writes updates back into your study list file.
+
+	format
+key|dictionary name|entry  
+that is the database format. the study list details can be found
+in argh's readme: epoch|rr;ssss;dddd|front|back  
+
+	usage
+add a new card for <key>: 
+  $ fox -a <study_list> <key>
+change an existing card for <key>: 
+  $ fox -c <study_list> <key> 
+delete all cards for <key>:
+  $ fox -d <study_list> <key>  
+
+	installation
+cc main.c -o2 -o $HOME/.local/bin/fox  
+ensure your database and study lists live under:  
+  $HOME/.local/share/ccq/
+
+	removal
+rm $HOME/.local/bin/fox  
+rm $HOME/.local/share/ccq/<database>
+
+	notes
+just like argh, fox avoids using stdio.h and string.h
+text is treated as raw binary and parsed with read() and lseek()
