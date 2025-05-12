@@ -298,7 +298,7 @@ parsed_args:
 	} while (tmp);
 
 	write(1, due_cnt_str, tmpbuf + sizeof tmpbuf - due_cnt_str);
-	char start_msg[] = " cards due today\nenter to show back; enter for PASS, other + enter for FAIL\n\n";
+	char start_msg[] = " cards due\nenter to show back; enter for PASS, other + enter for FAIL\n\n";
 	write(1, start_msg, sizeof start_msg);
 
 	for (int i = 0; i < due_count; ++i) {
@@ -406,7 +406,7 @@ parsed_args:
 		if (write(fd, epoch_str, epoch_len) != epoch_len)
 			die("write date");
 
-		/* skip the ‘|’ */
+		/* overwrite the ‘|’ */
 		if (write(fd, "|", 1) != 1)
 			die("write pipe");
 

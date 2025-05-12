@@ -127,12 +127,12 @@ add_card(char *path_db, char *path_sl, char *key)
 
 	/* check if key already in sl */
 	if (lsearch_sl(path_sl, key, klen))
-		die("duplicate: key found in sl\n");
+		die("duplicate: key found in study list\n");
 
 	/* check if key not in db */
 	long *pos_arr = bsearch_db(path_db, key, klen);
 	if (!pos_arr)
-		die("no information: key not found in db\n");
+		die("no information: key not found in database\n");
 
 	int fd = open(path_db, O_RDONLY);
 	if (fd < 0)
@@ -330,6 +330,9 @@ void change_card(char *path_sl, char *key) {
 	if (!off)
 		die("key not found in sl\n");
 	return;
+
+
+	/* use ftruncate */
 }
 
 void delete_card(char *path_sl, char *key) {
@@ -345,6 +348,8 @@ void delete_card(char *path_sl, char *key) {
 	/* find next line's start offset off_2 */
 	/* store bytes raw_file from that to EOF */
 	/* write raw_file from off_1 onwards */
+
+	/* use ftruncate */
 
 	return;
 }

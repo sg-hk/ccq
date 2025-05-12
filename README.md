@@ -1,8 +1,12 @@
 ![ccq_logo](/ccq.png "ccq")
 ## (存储器 - **c**ún **c**hǔ **q**ì) 
 
-[WIP!] very simple flashcard program for language learning
+very simple flashcard program for language learning
 
-FOXP2: reviewer
+it works right now; needs some testing before being completely done
 
-TBD: database
+ARHGAP11B: reviewer and scheduler
+
+FOXP2: database and editor
+
+more info in respective directories' readmes
