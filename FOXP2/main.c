@@ -6,6 +6,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <locale.h>
 
 #define die(msg) do{write(2,msg,sizeof msg);exit(1);}while(0)
 
@@ -19,7 +20,7 @@ static const int init_buf    = 128;
 static const int max_results = 999;
 
 void add_card(char *path_db, char *path_sl, char *key);
-void change_card(char *path_sl, char *key);
+void change_back(char *path_sl, char *key);
 void delete_card(char *path_sl, char *key);
 
 static int cmp_key(int fd, char *key, int klen);
@@ -29,6 +30,7 @@ long lsearch_sl(char *path_sl, char *key, int klen);
 int
 main(int argc, char *argv[])
 {
+	setlocale(LC_ALL, "");
 	/* TODO flagless just search in db */
 
 #ifdef ___OPENBSD___
@@ -105,9 +107,9 @@ main(int argc, char *argv[])
 
 	if (want_add)
 		add_card(path_db, path_sl, key);
-	if (want_change)
-		change_card(path_sl, key);
-	if (want_delete)
+	else if (want_change)
+		change_back(path_sl, key);
+	else if (want_delete)
 		delete_card(path_sl, key);
 
 	return 0;
@@ -322,7 +324,8 @@ add_card(char *path_db, char *path_sl, char *key)
 }
 
 void 
-change_card(char *path_sl, char *key) {
+change_back(char *path_sl, char *key) 
+{
 	char ch;
 	char *old_back, *new_back, *tail;
 	int klen, nlen, oldlen, bufold, bufnew, fd;
@@ -341,14 +344,14 @@ change_card(char *path_sl, char *key) {
 	/* get matched line's back */
 	fd = open(path_sl, O_RDWR);
 	if (fd < 0)
-		die("error open sl in change card\n");
+		die("error open sl in change back\n");
 
 	back_start = off + epoch_len + fsrs_len + klen + 3;
 	lseek(fd, back_start, SEEK_SET);
 	bufold = 128;
 	old_back = malloc(bufold);
 	if (!old_back)
-		die("malloc error to old_back in change_card\n");
+		die("malloc error to old_back in change back\n");
 	ch = 0;
 	while(ch!='\n') {
 		n = read(fd, &ch, 1);
@@ -356,42 +359,42 @@ change_card(char *path_sl, char *key) {
 			/* EOF: last line in study list */
 			break;
 		} else if (n != 1)
-			die("read error in change_card card back copy\n");
+			die("read error in change back's back copy\n");
 
 		if (oldlen+1 >= bufold) {
 			bufold *= 2;			
 			char *tmp = realloc(old_back, bufold);
 			if (!tmp)
-				die("realloc failed for old_back in change_card\n");
+				die("realloc failed for old_back in change back\n");
 			old_back = tmp;
 		}
 		old_back[oldlen++]=ch;
 	}
 
 	/* print old back */
-	char msg_old[] = "old back: [";
-	write(1, msg_old, sizeof msg_old);
-	write(1, old_back, oldlen);
-	write(fd, "]\n", 2);
+	write(1, "old back: ", 10);
+	write(1, old_back, oldlen); 
 	free(old_back);
 
 	/* prompt new back */
-	char msg_query[] = "please input the card's new back: ";
+	char msg_query[] = "new back: ";
 	write(1, msg_query, sizeof msg_query);
-	ch = 0;
 	bufnew = 128;
 	new_back = malloc(bufnew);
 	if (!new_back)
-		die("malloc error to new_back in change_card\n");
-	for (nlen = 0; new_back[nlen] != '\n'; ++nlen) {
-		if (nlen == bufnew) {
+		die("malloc error to new_back in change back\n");
+	ch = 0, nlen = 0;
+	while (ch != '\n') {
+		if (nlen >= bufnew) {
 			bufnew *= 2;
 			char *tmp = realloc(new_back, bufnew);
 			if (!tmp)
-				die("realloc error for new_back in change_card");
+				die("realloc error for new_back in change back");
 			new_back = tmp;
 		}
-		read(0, &new_back[nlen], 1);
+		if (read(0, &ch, 1) != 1)
+			die("read stdin error in change back");
+		new_back[nlen++] = ch; /* this includes \n */
 	}
 
 	/* reopen file, get tail */
@@ -400,24 +403,22 @@ change_card(char *path_sl, char *key) {
 	size = end - next;
 	tail = malloc(size);
 	if (!tail)
-		die("error malloc tail in change_card\n");
+		die("error malloc tail in change back\n");
 	lseek(fd, next, SEEK_SET);
 	if (read(fd, tail, size) != size)
-		die("error read rest of file in change_card\n");
+		die("error read rest of file in change back\n");
 
-	/* overwrite back + \n */
+	/* overwrite back */
 	lseek(fd, back_start, SEEK_SET);
 	if (write(fd, new_back, nlen) != nlen)
-		die("write new_back error in change_card\n");
+		die("write new_back error in change back\n");
 	free(new_back);
-	if (write(fd, "\n", 1) != 1)
-		die("write '\\n' error in change_card\n");
 
 	/* add rest of file and truncate */
 	if (write(fd, tail, size) != size)
-		die("write rest of file error in change_card\n");
+		die("write rest of file error in change back\n");
 	free(tail);
-	ftruncate(fd, back_start + nlen + 1 + size);
+	ftruncate(fd, back_start + nlen + size);
 	close(fd);
 
 	char msg_success[] = "back successfully changed\n";
@@ -427,7 +428,8 @@ change_card(char *path_sl, char *key) {
 }
 
 void 
-delete_card(char *path_sl, char *key) {
+delete_card(char *path_sl, char *key) 
+{
 	char ch;
 	char *tail;
 	int klen, fd;
@@ -496,9 +498,9 @@ delete_card(char *path_sl, char *key) {
 
 
 	char msg_pre[] = "card [";
-	char msg_post[] = "]successfully deleted\n";
+	char msg_post[] = "] successfully deleted\n";
 	write(1, msg_pre, sizeof msg_pre);
-	write(fd, key, klen);
+	write(1, key, klen);
 	write(1, msg_post, sizeof msg_post);
 
 	return;
