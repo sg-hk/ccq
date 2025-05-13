@@ -26,7 +26,7 @@ main(int argc, char *argv[], char *envp[])
 	char ch = 0;
 
 	char *due_cnt_str;
-	char *home = 0;
+	char *home;
 	char *res_arr;
 	char path[path_len];
 	char tmpbuf[12]; /* for due_count itoa */
@@ -80,6 +80,7 @@ parsed_args:
 	/* build path */
 	/* ---------- */
 	/* manual getenv() */
+	home = 0;
 	for (int i = 0; envp[i]; ++i) {
 		if (envp[i][0] == 'H' && envp[i][1] == 'O' &&
 		    envp[i][2] == 'M' && envp[i][3] == 'E' && envp[i][4] == '=') {

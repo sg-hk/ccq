@@ -29,6 +29,7 @@ long lsearch_sl(char *path_sl, char *key, int klen);
 int
 main(int argc, char *argv[])
 {
+	/* TODO flagless just search in db */
 
 #ifdef ___OPENBSD___
     if (pledge("stdio rpath wpath", NULL) == -1)
@@ -126,7 +127,7 @@ add_card(char *path_db, char *path_sl, char *key)
 		++klen;
 
 	/* check if key already in sl */
-	if (lsearch_sl(path_sl, key, klen))
+	if (lsearch_sl(path_sl, key, klen) != -1)
 		die("duplicate: key found in study list\n");
 
 	/* check if key not in db */
@@ -320,40 +321,190 @@ add_card(char *path_db, char *path_sl, char *key)
 	close(fd);
 }
 
-void change_card(char *path_sl, char *key) {
-	int klen = 0;
-	long off = 0;
+void 
+change_card(char *path_sl, char *key) {
+	char ch;
+	char *old_back, *new_back, *tail;
+	int klen, nlen, oldlen, bufold, bufnew, fd;
+	long off, back_start, next, end, size;
+	ssize_t n;
 
+	klen = 0;
 	while(key[klen])
 		++klen;
+
+	off = 0;
 	off = lsearch_sl(path_sl, key, klen);
-	if (!off)
+	if (off == -1)
 		die("key not found in sl\n");
+
+	/* get matched line's back */
+	fd = open(path_sl, O_RDWR);
+	if (fd < 0)
+		die("error open sl in change card\n");
+
+	back_start = off + epoch_len + fsrs_len + klen + 3;
+	lseek(fd, back_start, SEEK_SET);
+	bufold = 128;
+	old_back = malloc(bufold);
+	if (!old_back)
+		die("malloc error to old_back in change_card\n");
+	ch = 0;
+	while(ch!='\n') {
+		n = read(fd, &ch, 1);
+		if (n == 0) {
+			/* EOF: last line in study list */
+			break;
+		} else if (n != 1)
+			die("read error in change_card card back copy\n");
+
+		if (oldlen+1 >= bufold) {
+			bufold *= 2;			
+			char *tmp = realloc(old_back, bufold);
+			if (!tmp)
+				die("realloc failed for old_back in change_card\n");
+			old_back = tmp;
+		}
+		old_back[oldlen++]=ch;
+	}
+
+	/* print old back */
+	char msg_old[] = "old back: [";
+	write(1, msg_old, sizeof msg_old);
+	write(1, old_back, oldlen);
+	write(fd, "]\n", 2);
+	free(old_back);
+
+	/* prompt new back */
+	char msg_query[] = "please input the card's new back: ";
+	write(1, msg_query, sizeof msg_query);
+	ch = 0;
+	bufnew = 128;
+	new_back = malloc(bufnew);
+	if (!new_back)
+		die("malloc error to new_back in change_card\n");
+	for (nlen = 0; new_back[nlen] != '\n'; ++nlen) {
+		if (nlen == bufnew) {
+			bufnew *= 2;
+			char *tmp = realloc(new_back, bufnew);
+			if (!tmp)
+				die("realloc error for new_back in change_card");
+			new_back = tmp;
+		}
+		read(0, &new_back[nlen], 1);
+	}
+
+	/* reopen file, get tail */
+	next = lseek(fd, 0, SEEK_CUR);
+	end = lseek(fd, 0, SEEK_END);
+	size = end - next;
+	tail = malloc(size);
+	if (!tail)
+		die("error malloc tail in change_card\n");
+	lseek(fd, next, SEEK_SET);
+	if (read(fd, tail, size) != size)
+		die("error read rest of file in change_card\n");
+
+	/* overwrite back + \n */
+	lseek(fd, back_start, SEEK_SET);
+	if (write(fd, new_back, nlen) != nlen)
+		die("write new_back error in change_card\n");
+	free(new_back);
+	if (write(fd, "\n", 1) != 1)
+		die("write '\\n' error in change_card\n");
+
+	/* add rest of file and truncate */
+	if (write(fd, tail, size) != size)
+		die("write rest of file error in change_card\n");
+	free(tail);
+	ftruncate(fd, back_start + nlen + 1 + size);
+	close(fd);
+
+	char msg_success[] = "back successfully changed\n";
+	write(1, msg_success, sizeof msg_success);
+
 	return;
-
-
-	/* use ftruncate */
 }
 
-void delete_card(char *path_sl, char *key) {
-	int klen = 0;
-	long off = 0;
+void 
+delete_card(char *path_sl, char *key) {
+	char ch;
+	char *tail;
+	int klen, fd;
+	long off, next, end, size;
+	ssize_t n;
 
+	klen = 0;
 	while(key[klen])
 		++klen;
+
+	off = 0;
 	off = lsearch_sl(path_sl, key, klen);
-	if (!off)
+	if (off == -1)
 		die("key not found in sl\n");
 
-	/* find next line's start offset off_2 */
-	/* store bytes raw_file from that to EOF */
-	/* write raw_file from off_1 onwards */
+	ch = 0;
+	next = 0;
+	n = 0;
 
-	/* use ftruncate */
+	fd = open(path_sl, O_RDWR);
+	if (fd < 0)
+		die("open sl error in delete card\n");
+
+	/* skip to end of matched line */
+	lseek(fd, off, SEEK_SET);
+	while (ch != '\n') {
+		n = read(fd, &ch, 1);
+		if (n == 0) /* EOF: card is last line */
+			break;
+		if (n < 0)
+			die("read '\\n' error in delete card\n");
+	}
+
+	/* store positions */
+	next = lseek(fd, 0, SEEK_CUR);
+	end = lseek(fd, 0, SEEK_END);
+
+	if (next >= end) {
+		/* matched line is the last */
+		if (off == 0) /* and the first, i.e. the only one */
+			ftruncate(fd, 0);
+		else /* otherwise truncate to preceding one, removing \n */
+			ftruncate(fd, off - 1);
+		close(fd);
+		return;
+	}
+
+	/* read the rest of the file */
+	size = end - next;
+	tail = malloc(size);
+	if (!tail)
+		die("malloc error in delete card\n");
+	lseek(fd, next, SEEK_SET);
+	if (read(fd, tail, size) != size)
+		die("read rest of file error in delete card\n");
+
+	/* overwrite starting at 'off' */
+	lseek(fd, off, SEEK_SET);
+	if (write(fd, tail, size) != size)
+		die("write rest of file error in delete card\n");
+	free(tail);
+
+	/* shrink */
+	ftruncate(fd, off + size);
+	close(fd);
+
+
+	char msg_pre[] = "card [";
+	char msg_post[] = "]successfully deleted\n";
+	write(1, msg_pre, sizeof msg_pre);
+	write(fd, key, klen);
+	write(1, msg_post, sizeof msg_post);
 
 	return;
 }
 
+/* search for key in sl, return offset or -1 */
 long
 lsearch_sl(char *path_sl, char *key, int klen)
 {
@@ -375,7 +526,7 @@ lsearch_sl(char *path_sl, char *key, int klen)
 			/* we might have reached EOF -> return 0 */
 			if (read(fd, &ch, 1) != 1)  {
 				close(fd);
-				return 0;
+				return -1;
 			}
 		}
 
@@ -401,7 +552,7 @@ lsearch_sl(char *path_sl, char *key, int klen)
 			ssize_t n = read(fd, &ch, 1);
 			if (n == 0) { /* EOF */
 				close(fd);
-				return 0;
+				return -1;
 			}
 			if (n < 0)
 				die("drain line read in lsearch failed\n");
