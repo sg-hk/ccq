@@ -529,8 +529,14 @@ lsearch_sl(char *path_sl, char *key, int klen)
 			die("lseek in lsearch failed\n");
 
 		/* skip epoch|fsrs| */
-		if (read(fd, buf, skip_len) != skip_len)
+		n = read(fd, buf, skip_len);
+		if (n < 0)
 			die("error skipping fsrs and epoch in lsearch\n");
+		if (n < skip_len) {
+			/* this condition gets triggered at EOF */
+			close(fd);
+			return -1;
+		} 
 
 		/* match key */
 		match = 1;

@@ -1,23 +1,28 @@
-#include <stdlib.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 #define die(msg) do{write(2,msg,sizeof msg);exit(1);}while(0)
 
 double schedule(int g,int reps,double s,double d,double elap,double rd);
+void handle_signal(int sig);
+
+volatile sig_atomic_t terminate;
 
 int
 main(int argc, char *argv[], char *envp[])
 {
 #ifdef ___OPENBSD___
-    if (pledge("stdio rpath wpath", NULL) == -1)
-        die("pledge\n");
+	if (pledge("stdio rpath wpath", NULL) == -1)
+		die("pledge\n");
 #endif
 
 	/* --------------- */
 	/* initialize vars */
 	/* --------------- */
+	terminate = 0;
 	const char *ccq_infix = "/.local/share/ccq/";
 	const int  epoch_len  = 10;
 	const int  fsrs_len   = 12;
@@ -36,6 +41,7 @@ main(int argc, char *argv[], char *envp[])
 
 	int due_cnt_buf = 100;
 	int due_count = 0;
+	int reviewed_count;
 	int fd = -1;
 	int is_due = 0, is_fsrs = 0, is_front = 0, is_back = 0;
 	int newst_flag = 0, rand_flag = 0;
@@ -57,6 +63,14 @@ main(int argc, char *argv[], char *envp[])
 	back_len = malloc(due_cnt_buf * sizeof(long));
 	if (!epoch_old || !fsrs_pos || !front_len || !back_len)
 		die("initial mallocs failed\n");
+
+	/* set up signal handler */
+        struct sigaction sa = {0};
+        sa.sa_handler = handle_signal;
+        sigemptyset(&sa.sa_mask);
+        if (sigaction(SIGINT,  &sa, NULL) == -1 ||
+            sigaction(SIGTERM, &sa, NULL) == -1)
+		die("signal action failed\n");
 
 	/* ---------- */
 	/* parse args */
@@ -302,13 +316,14 @@ parsed_args:
 	char start_msg[] = " cards due\nenter to show back; enter for PASS, other + enter for FAIL\n\n";
 	write(1, start_msg, sizeof start_msg);
 
-	for (int i = 0; i < due_count; ++i) {
+	reviewed_count = 0;
+	for (; (reviewed_count < due_count) && !terminate; ++reviewed_count) {
 		/* requiring user \n is a really hacky way to avoid using termios.h
 		 * a new line gets printed since canonical mode requires \n for read 
 		 * and it is the only character that gets read by read(0, ...)
 		 * this way we achieve roughly the same behaviour as with ~(ICANON | ECHO) */
 
-		int k = review_order[i];
+		int k = review_order[reviewed_count];
 		write(1, front[k], front_len[k]);
 		free(front[k]);
 
@@ -337,6 +352,17 @@ parsed_args:
 			write(1, "PASS\n\n", 6);
 	}
 
+	if (terminate) {
+		char msg[] = "\nuser terminated, updating reviewed cards\n";
+		write(1, msg, sizeof msg);
+		/* free skipped fields */
+		for (int i = reviewed_count; i < due_count; ++i) {
+			int k = review_order[i];
+			free(front[k]);
+			free(back[k]);
+		}
+	}
+
 	free(front);
 	free(back);
 
@@ -347,7 +373,7 @@ parsed_args:
 	if (fd < 0)
 		die("second file open failed\n");
 
-	for (int i = 0; i < due_count; ++i) {
+	for (int i = 0; i < reviewed_count; ++i) {
 		int k = review_order[i];
 
 		/* scheduler args */
@@ -425,4 +451,11 @@ parsed_args:
 	free(review_order);
 
 	return 0;
+}
+
+void
+handle_signal(int sig)
+{
+	(void)sig;
+	terminate = 1;
 }
