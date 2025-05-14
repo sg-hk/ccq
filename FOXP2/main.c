@@ -1,7 +1,3 @@
-/* to increase performance / reduce syscall overhead
- * buffered reads could be an idea, but we'd need
- * a global pos variable to correctly update offsets */
-
 #include <fcntl.h>
 #include <time.h>
 #include <stdlib.h>
@@ -31,7 +27,8 @@ int
 main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "");
-	/* TODO flagless just search in db */
+	/* TODO flagless just search in db 
+	 * TODO buffer lsearch drain line to reduce syscalls */
 
 #ifdef ___OPENBSD___
     if (pledge("stdio rpath wpath", NULL) == -1)
@@ -510,29 +507,33 @@ delete_card(char *path_sl, char *key)
 long
 lsearch_sl(char *path_sl, char *key, int klen)
 {
-	int fd = open(path_sl, O_RDONLY);
+	char ch;
+	char *buf;
+	int fd, match;
+	long offset;
+	ssize_t n;
+
+	const int skip_len = epoch_len + fsrs_len + 2;
+	buf = malloc(skip_len);
+	if (!buf)
+		die("error malloc to buf in lsearch\n");
+
+	fd = open(path_sl, O_RDONLY);
 	if (fd < 0)
 		die("couldn't open sl for lsearch\n");
 
-	const int skip_len = epoch_len + fsrs_len + 2;
-	long offset = 0;
-	char ch;
-
+	offset = 0;
 	for (;;) {
 		offset = lseek(fd, 0, SEEK_CUR);
 		if (offset < 0)
 			die("lseek in lsearch failed\n");
 
 		/* skip epoch|fsrs| */
-		for (int i = 0; i < skip_len; ++i) {
-			/* we might have reached EOF -> return 0 */
-			if (read(fd, &ch, 1) != 1)  {
-				close(fd);
-				return -1;
-			}
-		}
+		if (read(fd, buf, skip_len) != skip_len)
+			die("error skipping fsrs and epoch in lsearch\n");
 
-		int match = 1;
+		/* match key */
+		match = 1;
 		for (int i = 0; i < klen; ++i) {
 			/* we should never reach EOF in key */
 			if (read(fd, &ch, 1) != 1) 
@@ -544,14 +545,21 @@ lsearch_sl(char *path_sl, char *key, int klen)
 		}
 
 		if (match) {
+			/* the key has been matched but we need to forbid partial matches */
+			if (read(fd, &ch, 1) < 1)
+				die("read error in lsearch delimiter check\n");
+			if (ch != '|')
+				return -1;
+
+			/* now we are good */
 			close(fd);
 			return offset;
 		}
 
 		/* no match: drain line and loop */
+		n = -1;
 		do {
-			// TODO buffer this to reduce amount of syscalls
-			ssize_t n = read(fd, &ch, 1);
+			n = read(fd, &ch, 1);
 			if (n == 0) { /* EOF */
 				close(fd);
 				return -1;
@@ -576,11 +584,13 @@ cmp_key(int fd, char *key, int klen)
 		if (ch != key[i])
 			return (ch - key[i]);
 	}
+
 	/* the key has been matched but we need to forbid partial matches */
 	if (read(fd, &ch, 1) < 1)
 		die("read error in cmp_key delimiter check\n");
 	if (ch != '|')
 		return 1; /* db_string > search_string */
+
 	return 0;
 }
 
