@@ -1,7 +1,7 @@
 ![ccq_logo](/ccq.png "ccq")
 ## (存储器 - **c**ún **c**hǔ **q**ì) 
 
-[![ccq_demo](https://asciinema.org/a/hNx7iqkgS4Yo0wg5bDPBEUGQQ.png)](https://asciinema.org/a/hNx7iqkgS4Yo0wg5bDPBEUGQQ)
+[![ccq_demo](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i.png)](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i)
 
 very simple flashcard program for language learning. as a challenge, almost all the code consists of low-level system calls (write, read, lseek, ...) instead of stdio/string libraries. one of the consequences is that ccq is *extremely* fast.
 
@@ -26,3 +26,23 @@ Bilingual:
 
 
 more info in respective directories' readmes
+
+
+Notes:
+
+I find ccq works very well with (n)vim; asciinema doesn't capture the screen well within the editor, so I haven't shown it in the demo. You can try yourself with the nvim keybinding below. Select a Chinese word, then hit leader + a.
+
+```lua
+function SendClipboardToCmd()
+	local text = vim.fn.getreg("+")
+
+	if not text or text == "" then return end
+
+	text = vim.fn.shellescape(text)
+
+	local cmd = "fox -a zh " .. text
+	vim.cmd("vsplit")
+	vim.cmd("terminal " .. cmd)
+end
+vim.keymap.set("n", "<leader>a", SendClipboardToCmd, { desc = "send clipboard to fox - a zh" })
+```
