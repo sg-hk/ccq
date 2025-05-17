@@ -2,8 +2,9 @@
 ## (存储器 - **c**ún **c**hǔ **q**ì) 
 
 [![ccq_demo](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i.png)](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i)
+(asciinema seems unable to capture non-ASCII, multibyte chars well - bear with the visual bugs).
 
-very simple flashcard program for language learning. as a challenge, almost all the code consists of low-level system calls (write, read, lseek, ...) instead of stdio/string libraries. one of the consequences is that ccq is *extremely* fast.
+very simple flashcard program for language learning
 
 it works right now; I use it daily. some testing is required to polish edges
 
@@ -28,7 +29,7 @@ Bilingual:
 more info in respective directories' readmes
 
 
-Notes:
+#### Notes
 
 I find ccq works very well with (n)vim; asciinema doesn't capture the screen well within the editor, so I haven't shown it in the demo. You can try yourself with the nvim keybinding below. Select a Chinese word, then hit leader + a.
 
@@ -46,3 +47,6 @@ function SendClipboardToCmd()
 end
 vim.keymap.set("n", "<leader>a", SendClipboardToCmd, { desc = "send clipboard to fox - a zh" })
 ```
+
+
+As a challenge, almost all the code consists of low-level system calls (file descriptior reads and writes, byte offset seeks, ...) instead of stdio/string library functions. There is minimal overhead, and ccq is fast, but this approach introduces a large amount of I/O syscalls for searching. Buffering through mmap would make sense here; it's a possible future feature.
