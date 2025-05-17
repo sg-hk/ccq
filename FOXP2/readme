@@ -24,7 +24,7 @@ since the study list is a simple psv (pipe-separated values), you can of course 
   end, { noremap = true, silent = true })
 
 	installation
-  cc main.c -o2 -o $HOME/.local/bin/fox
+  cc main.c -o $HOME/.local/bin/fox
   mv db $HOME/.local/share/ccq/
 ensure your database and study lists live under:  
   $HOME/.local/share/ccq/
