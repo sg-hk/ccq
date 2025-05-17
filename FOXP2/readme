@@ -9,21 +9,29 @@ that is the database format. the study list details can be found
 in argh's readme: epoch|rr;ssss;dddd|front|back  
 
 	usage
-add a new card for <key>: 
+look up <key> in database, and add the definition the user prefers to the study list: 
   $ fox -a <study_list> <key>
-change an existing card for <key>: 
+change <key>'s back: 
   $ fox -c <study_list> <key> 
-delete all cards for <key>:
+delete <key> from the study list:
   $ fox -d <study_list> <key>  
 
+since the study list is a simple psv (pipe-separated values), you can of course simply edit the file directly with your favorite text editor. for manual card creation, here is a nvim shortcut I use to write the first two fields (due date, and initial scheduler data); the front and back of the card follow directly:
+  vim.keymap.set('n', '<leader>f', function()
+    local text = os.time() .. '|00;0250;0500|'
+    vim.api.nvim_feedkeys(text, 'n', false) 
+    vim.cmd('startinsert') 
+  end, { noremap = true, silent = true })
+
 	installation
-cc main.c -o2 -o $HOME/.local/bin/fox  
+  cc main.c -o2 -o $HOME/.local/bin/fox
+  mv db $HOME/.local/share/ccq/
 ensure your database and study lists live under:  
   $HOME/.local/share/ccq/
 
 	removal
-rm $HOME/.local/bin/fox  
-rm $HOME/.local/share/ccq/<database>
+  rm $HOME/.local/bin/fox  
+  rm $HOME/.local/share/ccq/db
 
 	notes
 just like argh, fox avoids using stdio.h and string.h
