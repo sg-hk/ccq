@@ -31,7 +31,7 @@ more info in respective directories' readmes
 
 #### Notes
 
-I find ccq works very well with (n)vim; asciinema doesn't capture the screen well within the editor, so I haven't shown it in the demo. You can try yourself with the nvim keybinding below. Select a Chinese word, then hit leader + a.
+I find ccq works very well with (n)vim; asciinema doesn't capture the screen well within the editor, so I haven't shown it in the demo. You can try yourself with the nvim keybinding below. Select a Chinese word, yank it to clipboard, then hit leader + a.
 
 ```lua
 function SendClipboardToCmd()
