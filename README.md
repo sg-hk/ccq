@@ -1,12 +1,7 @@
 ![ccq_logo](/ccq.png "ccq")
 ## (存储器 - **c**ún **c**hǔ **q**ì) 
 
-[![demo](https://asciinema.org/a/HZvlI8BxOsB69b49aECgszhJ7.svg)](https://asciinema.org/a/HZvlI8BxOsB69b49aECgszhJ7)
-
-
-
-[![demopng](https://asciinema.org/a/HZvlI8BxOsB69b49aECgszhJ7.png)](https://asciinema.org/a/HZvlI8BxOsB69b49aECgszhJ7)
-
+[![ccq_demo](https://asciinema.org/a/hNx7iqkgS4Yo0wg5bDPBEUGQQ.png)](https://asciinema.org/a/hNx7iqkgS4Yo0wg5bDPBEUGQQ)
 
 very simple flashcard program for language learning. as a challenge, almost all the code consists of low-level system calls (write, read, lseek, ...) instead of stdio/string libraries. one of the consequences is that ccq is *extremely* fast.
 
