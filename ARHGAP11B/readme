@@ -1,0 +1,33 @@
+	introduction
+ARHGAP11B, or argh for short, is the core of ccq (存储器).
+it is a command-line SRS engine to review and schedule cards:
+it reads a study list of flashcards, gathers dues, shows fronts, 
+captures pass/fail, and updates review schedule using fsrs
+
+	format
+epoch|rr;ssss;dddd|front|back
+where epoch = 10 digit unix timestamp
+rr;ssss;dddd = reps;stability×100;difficulty×100 (fsrs vars)
+
+	usage
+review in order of creation:
+$ argh <study_list>
+review newest first (reverse of the above):
+$ argh -n <study_list>
+review in random order:
+$ argh -r <study_list>
+
+	installation
+cc main.c scheduler.c -lm -o $HOME/.local/bin/argh
+study lists can then be created in $HOME/.local/share/ccq
+
+	removal
+rm $HOME/.local/bin/argh
+rm $HOME/.local/share/ccq/<study_lists>
+
+	notes
+argh does not use stdio.h or string.h, both as a personal challenge
+and out of a desire for greater control in handling multibyte chars.
+the design is, as a result, very simple: open, lseek, read, write...
+the C code used consists mostly of syscall wrappers and pointer
+arithmetic; there is some vague plan of porting it to x86/ARM asm.
