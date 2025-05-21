@@ -4,10 +4,12 @@
 
 **c**ún **c**hǔ **q**ì is a very simple flashcard program for language learning. it's anki and yomitan in ~1000 lines of C!
 
+[note!] there are probably still some bugs lurking. i use it daily though
+
 i made this because i wanted to have my whole language learning workflow inside the terminal:
 - flat text files (no sql) means grep, awk, etc. work great, and you can see exactly how your data is stored and managed
 - CLI nature means it can be called from anywhere (eg, from vim to look up a word, scripts, ...)
-- hackable, transparent: the codebase is intended to be simple enough to fit in a single `main.c` file and understand from A to Z (well... don't look at the database search algorithm hhh)
+- hackable, transparent: the codebase is intended to be simple enough to fit in a single `main.c` file and understand from A to Z
 
 you can keep your study lists in sync across devices by push/pulling them with git. since they're plain text, you have a full view of the diffs / commit history too, which is neat
 
@@ -57,7 +59,7 @@ the latter requiring sudo if not writing in `$HOME`
 
 that's it!
 
-*note:* you can choose your default database and study list names in config.h, or pass them on through command line flags otherwise
+*note:* you can choose your default database and study list names in config.h.in, or pass them on through command line flags otherwise
 
 ### misc
 #### dictionaries included

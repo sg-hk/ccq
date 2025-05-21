@@ -1032,11 +1032,8 @@ char*
 build_ccq_path(const char *suffix)
 {
 	char *path = malloc(path_len);
-	char *home = getenv("HOME");
-	if (!home || home[0] == '\0')
-		die("home envp not set or empty");
 
-	int n = snprintf(path, path_len, "%s%s%s", home, CCQ_DATA_DIR, suffix);
+	int n = snprintf(path, path_len, "%s/%s", CCQ_DATA_DIR, suffix);
 	if (n >= path_len)
 		die("path too long\n");
 

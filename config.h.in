@@ -2,7 +2,7 @@
 #define CONFIG_H
 
 /* the data file directory, as set by meson */
-static const char *CCQ_DATA_DIR = "@CCQ_DATA_DIR@";
+static const char *CCQ_DATA_DIR = @CCQ_DATA_DIR@;
 
 /* database to query if no -d flag passed */
 static const char *DEFAULT_DB = "db";
