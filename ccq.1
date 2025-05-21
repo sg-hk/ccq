@@ -1,0 +1,86 @@
+.\" Man page for ccq(1)
+.TH CCQ 1 "May 22, 2025" "ccq Manual" "User Commands"
+
+.SH NAME
+ccq \- minimalist command-line flashcard review and querying tool
+
+.SH SYNOPSIS
+.B ccq
+[\fB-n\fR | \fB-o\fR | \fB-r\fR] [\fIstudy_list_suffix\fR]
+.br
+.B ccq
+\fB-q\fR \fIkey\fR [\fB-d\fR \fIdatabase_suffix\fR] [\fB-s\fR \fIstudy_list_suffix\fR]
+
+.SH DESCRIPTION
+.B ccq
+is a fast, minimalist command-line tool for spaced repetition flashcard review and for querying dictionaries to create new flashcards. It operates on plain text files and uses the FSRS (Free Spaced Repetition Scheduler) algorithm for scheduling reviews.
+
+The program has two main modes:
+.TP
+.B Review Mode
+If invoked without the \fB-q\fR option, \fBccq\fR enters review mode. It reads a specified study list, presents cards that are due, and updates their review schedules based on user feedback.
+.TP
+.B Query Mode
+If invoked with the \fB-q\fR option, \fBccq\fR searches for the given \fIkey\fR. First, it checks the study list. If found, it displays the card's back. If not found in the study list, it searches a specified dictionary database. If matches are found in the database, they are presented to the user, who can then select one to add to their study list.
+
+.SH OPTIONS
+.SS Review Mode Options:
+These options are mutually exclusive. If none are provided, a default order (oldest first, then random if not specified in config) is used.
+.TP
+\fB-n\fR
+Review due cards in newest-first order (based on creation time in the study list).
+.TP
+\fB-o\fR
+Review due cards in oldest-first order (based on creation time). This is often the default.
+.TP
+\fB-r\fR
+Review due cards in random order.
+.TP
+\fIstudy_list_suffix\fR
+(Optional) The suffix or name of the study list file. If not provided as an option argument (e.g., with \fB-s\fR in query mode) or directly as a non-option argument in review mode, a default study list is used (e.g., \fBDEFAULT_SL\fR from configuration, often looked for in \fI~/.local/share/ccq/\fR).
+
+.SS Query Mode Options:
+.TP
+\fB-q\fR \fIkey\fR
+(Required for query mode) Specifies the \fIkey\fR (e.g., a word or phrase) to search for.
+.TP
+\fB-d\fR \fIdatabase_suffix\fR
+(Optional) Specifies the suffix or name of the dictionary database file. If not provided, a default database is used (e.g., \fBDEFAULT_DB\fR from configuration, often \fI~/.local/share/ccq/\fR).
+.TP
+\fB-s\fR \fIstudy_list_suffix\fR
+(Optional) Specifies the suffix or name of the study list file to check and append to. If not provided, a default study list is used.
+
+.SH FILES
+\fBccq\fR typically stores its data files in the \fI$HOME/.local/share/ccq/\fR directory.
+.TP
+\fIstudy_list_suffix\fR
+The study list file. Contains cards with their scheduling information. See \fBccq\fR(5) for format details. (Default: \fBDEFAULT_SL\fR, e.g., "study.sl")
+.TP
+\fIdatabase_suffix\fR
+The dictionary database file. Used for looking up new terms. See \fBccq\fR(5) for format details. (Default: \fBDEFAULT_DB\fR, e.g., "database.db")
+
+.SH ENVIRONMENT
+.TP
+\fBHOME\fR
+Used to determine the user's home directory for locating the default data directory (\fI~/.local/share/ccq/\fR).
+
+.SH DIAGNOSTICS
+Exits 0 on success. Exits 1 on error, with messages printed to standard error.
+Ctrl+C (\fBSIGINT\fR) during review or input prompts should allow for graceful termination and saving of progress for completed reviews. Ctrl+D (\fBEOF\fR) on input prompts is typically treated as a desire to terminate or cancel the current input.
+
+.SH EXAMPLES
+.TP
+Review cards from the default study list:
+.B ccq default_study_list_suffix
+.TP
+Review cards in random order from "mylang.sl":
+.B ccq -r mylang.sl
+.TP
+Query for the term "intrinsic" using default database and study list:
+.B ccq -q intrinsic
+.TP
+Query for "algorithm" using "tech.db" and adding to "compsci.sl":
+.B ccq -q algorithm -d tech.db -s compsci.sl
+
+.SH SEE ALSO
+\fBccq\fR(5), \fBccq\fR(7)

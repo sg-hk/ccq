@@ -1,57 +1,126 @@
 ![ccq_logo](/ccq.png "ccq")
-## (存储器 - **c**ún **c**hǔ **q**ì) 
+## 存储器 
+### overview
 
-[![ccq_demo](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i.png)](https://asciinema.org/a/2ylrMY2vcHuRhPTXR0VmAML2i)
-(asciinema seems unable to capture non-ASCII, multibyte chars well - bear with the visual bugs).
+**c**ún **c**hǔ **q**ì is a very simple flashcard program for language learning. it's anki and yomitan in ~1000 lines of C!
 
-very simple flashcard program for language learning
+i made this because i wanted to have my whole language learning workflow inside the terminal:
+- flat text files (no sql) means grep, awk, etc. work great, and you can see exactly how your data is stored and managed
+- CLI nature means it can be called from anywhere (eg, from vim to look up a word, scripts, ...)
+- hackable, transparent: the codebase is intended to be simple enough to fit in a single `main.c` file and understand from A to Z (well... don't look at the database search algorithm hhh)
 
-it works right now; I use it daily. some testing is required to polish edges
+you can keep your study lists in sync across devices by push/pulling them with git. since they're plain text, you have a full view of the diffs / commit history too, which is neat
 
-ARHGAP11B: reviewer and scheduler. The scheduler uses the FSRS algorithm, as that is the most advanced memory loss minimizing algorithm (technically, "review interval maximizing" algorithm).
+you can easily edit or delete entries by directly modifying the text files in your `~/.local/share/ccq/` fodler (or your configured data directory)
 
-FOXP2: database and editor. it includes a number of dictionaries that I have pooled together and reformatted more cleanly, for a total of over 900k entries.
+`ccq` doesn't get in the way, doesn't require a separate GUI, or a whole browser environment. it's just you and some bytes waiting to be read
+
+### usage
+
+`ccq` operates in two main modes: review and query.
+
+* **review:** `ccq [-n | -o | -r] [study_list_suffix]`
+* **query:** `ccq -q <key> [-d <database_suffix>] [-s <study_list_suffix>]`
+
+for detailed information on command-line options, file formats, and misc:
+* `man ccq`: overview of commands and usage
+* `man 5 ccq`: detailed description of the study list and  database file formats
+* `man 7 ccq`: information on the internals, design choices, and FSRS implementation
+
+(don't forget to run `mandb` after installing if these commands don't work)
+
+a sample study list called `sample` is included and will be installed along with the database. you can run the commands on it if you like
+
+
+### installation
+
+there are no dependencies, besides:
+* gcc/clang/tcc/... some C compiler
+* meson, ninja
+
+then run
+```bash
+meson setup build
+```
+for system-wide install, or 
+```bash
+meson setup build --prefix:$HOME/.local
+```
+for user-only install. this might be preferable! to avoid root only write access (in case you want to manually edit them)
+
+then:
+```bash
+ninja -C build
+ninja -C build install
+```
+the latter requiring sudo if not writing in `$HOME`
+
+that's it!
+
+*note:* you can choose your default database and study list names in config.h, or pass them on through command line flags otherwise
+
+
+INCLUDE THE MESON COMMANDS HERE
+
+### misc
+#### dictionaries included
+
+db includes the dictionaries i use. they're in a simple format, pipe-delimited just like the study lists, which makes awk and grep happy, and which makes the database a breeze to browse and hack into whatever workflow you enjoy
 
 Monolingual:
 
-- 中华成语大词典
-- 现代汉语词典
-- 现代汉语规范词典
-- 两岸词典
+* 中华成语大词典
+* 现代汉语词典
+* 现代汉语规范词典
+* 两岸词典
 
 Bilingual:
 
-- Oxford English-Chinese dictionary
-- Wenlin ABC
-- 500 Idioms
+* Oxford English-Chinese dictionary
+* Wenlin ABC
+* 500 Idioms
 
+### nvim
 
-more info in respective directories' readmes
-
-
-#### Notes
-
-**nvim workflow**
-
-I find ccq works very well with (n)vim; asciinema doesn't capture the screen well when I open Chinese text, so I haven't shown it in the demo. You can try yourself with the nvim keybinding below. Select a Chinese word, yank it to clipboard, then hit leader + a.
+select a word in nvim, yank it to clipboard, then call this function to query a word within a split terminal
 
 ```lua
 function SendClipboardToCmd()
 	local text = vim.fn.getreg("+")
 
-	if not text or text == "" then return end
+	if not text or text == "" then 
+        print("ccq query: empty clipboard!")
+        return 
+    end
 
 	text = vim.fn.shellescape(text)
 
-	local cmd = "fox -a zh " .. text
+    -- option 1: default database query, add to default study list
+    local cmd = "ccq -q " .. text
+
+    -- option 2: set variables to have specific dbs/sls
+    -- local sl = "CHOOSE YOUR STUDY LIST HERE"
+    -- local db   = "CHOOSE YOUR DATABASE HERE"
+    -- local cmd = string.format("ccq -q %s -s %s -d %s", text, sl, db);
+
 	vim.cmd("vsplit")
 	vim.cmd("terminal " .. cmd)
 end
-vim.keymap.set("n", "<leader>a", SendClipboardToCmd, { desc = "send clipboard to fox - a zh" })
 ```
 
-Combined with the bookmarks nvim add-on, this makes for a very pleasant book-reading experience. You can look words up quickly with a couple key strokes, add definitions for later review, and drop back to the book within the same terminal window. You never need heavy, separate Python apps (Anki) or a whole browser environment (Yomitan).
+and to bind this to `<leader>c`, for example:
+```lua
+vim.keymap.set("n", "<leader>c", SendClipboardToCmd, { desc = "send clipboard to ccq" })
+```
+this way you can:
+- look words up quickly with a couple key strokes
+- add definitions for later review
+- drop back to the book within the same terminal window
 
-**code notes**
+if you would like to read books this way, i highly recommend the [bookmarks.nvim](https://github.com/crusj/bookmarks.nvim) plug-in. `ccq` and `bookmarks` together make for as pleasant a book-reading experience as any fuller-featured reader
 
-As a personal challenge, almost all the code consists of low-level system calls (file descriptor reads and writes, byte offset seeks, ...) instead of stdio/string library functions. There is minimal overhead, and ccq is fast, but this approach introduces a large amount of I/O syscalls for searching. Buffering through mmap would make sense here; it's a possible future feature.
+let's reading!
+
+#### to do
+
+using ```mmap(2)``` to read the study list and database files, and drastically reduce I/O syscall overhead, would be more elegant and improve performance (on extremely large files; performance is already below perception threshold now)
