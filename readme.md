@@ -59,9 +59,6 @@ that's it!
 
 *note:* you can choose your default database and study list names in config.h, or pass them on through command line flags otherwise
 
-
-INCLUDE THE MESON COMMANDS HERE
-
 ### misc
 #### dictionaries included
 
