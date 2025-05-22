@@ -112,7 +112,7 @@ this way you can:
 - add definitions for later review
 - drop back to the book within the same terminal window
 
-if you would like to read books this way, i highly recommend the [bookmarks.nvim](https://github.com/crusj/bookmarks.nvim) plug-in. `ccq` and `bookmarks` together make for as pleasant a book-reading experience as any fuller-featured reader
+if you would like to read books this way, i highly recommend the [bookmarks.nvim](https://github.com/LintaoAmons/bookmarks.nvim) plug-in. `ccq` and `bookmarks` together make for as pleasant a book-reading experience as any fuller-featured reader
 
 let's reading!
 

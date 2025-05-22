@@ -90,11 +90,6 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 	
-	if (argc != 1) {
-		printf("argc is %d\n", argc);
-		usage();
-	}
-
 	struct sigaction sa;
 	sa.sa_handler = handle_signal;
 	sigemptyset(&sa.sa_mask); /* don't block other signals */
@@ -106,28 +101,38 @@ main(int argc, char *argv[])
 	}
 
 	if (want_query) {
+		if (argc) {
+			fprintf(stderr, "extraneous arg: [%s]\n", argv[0]);
+			usage();
+		}
 		/* forbid mixing query and review flags */
 		if (order)
 			usage();
 
-		if (!database)
+		if (!database) {
 			database = build_ccq_path(DEFAULT_DB);
-		else
+		} else {
 			database = build_ccq_path(database);
+		}
 
-		if (!study_list)
+		if (!study_list) {
 			study_list = build_ccq_path(DEFAULT_SL);
-		else
+		} else {
 			study_list = build_ccq_path(study_list);
+		}
 
 		query(key, database, study_list);
 	} else {
 		if (!order)
 			order = DEFAULT_ORDER;
 
-		if (!study_list)
+		if (!study_list) {
+			if (argc != 1) {
+				fprintf(stderr, "missing study list arg\n");
+				usage();
+			}
 			study_list = build_ccq_path(argv[0]);
-		else
+		} else
 			study_list = build_ccq_path(study_list);
 
 		review_list(study_list, order);
@@ -689,7 +694,7 @@ choose_index:
 	/* open sl, append, close */
 	fd = open(sl_path, O_RDWR | O_APPEND);
 	if (fd < 0)
-		die("couldn't open sl to append card\n");
+		die("couldn't open sl at %s to append card\n", sl_path);
 	write(fd, final_str, final_len);
 	free(final_str);
 	close(fd);
@@ -730,7 +735,7 @@ get_instant_char(void)
 }
 
 off_t
-search_sl(const char *key, const char *sl_path, const int klen)
+search_sl(const char *sl_path, const char *key, const int klen)
 {
 	char ch;
 	char *buf;
@@ -743,7 +748,7 @@ search_sl(const char *key, const char *sl_path, const int klen)
 
 	fd = open(sl_path, O_RDONLY);
 	if (fd < 0)
-		die("couldn't open sl for search\n");
+		die("couldn't open sl at %s for search\n", sl_path);
 
 	offset = 0;
 	for (;;) {
@@ -1054,7 +1059,7 @@ void
 handle_signal(int sig)
 {
 	(void)sig;
-	printf("\nccq exiting...\n");
+	printf("\n\nccq exiting...\n");
 	terminate = true;
 }
 
