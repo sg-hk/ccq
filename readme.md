@@ -13,7 +13,7 @@ i made this because i wanted to have my whole language learning workflow inside 
 
 you can keep your study lists in sync across devices by push/pulling them with git. since they're plain text, you have a full view of the diffs / commit history too, which is neat
 
-you can easily edit or delete entries by directly modifying the text files in your `~/.local/share/ccq/` fodler (or your configured data directory)
+you can easily edit or delete entries by directly modifying the text files in your `~/.local/share/ccq/` folder (or your configured data directory)
 
 `ccq` doesn't get in the way, doesn't require a separate GUI, or a whole browser environment. it's just you and some bytes waiting to be read
 
@@ -21,8 +21,8 @@ you can easily edit or delete entries by directly modifying the text files in yo
 
 `ccq` operates in two main modes: review and query.
 
-* **review:** `ccq [-n | -o | -r] [study_list_suffix]`
-* **query:** `ccq -q <key> [-d <database_suffix>] [-s <study_list_suffix>]`
+* **review:** `ccq [-n | -o | -r] [study_list]`
+* **query:** `ccq -q <key> [-d <database>] [-s <study_list>]`
 
 for detailed information on command-line options, file formats, and misc:
 * `man ccq`: overview of commands and usage
@@ -40,15 +40,11 @@ there are no dependencies, besides:
 * gcc/clang/tcc/... some C compiler
 * meson, ninja
 
-then run
+ensure you have those, then run
 ```bash
-meson setup build
+meson setup build --prefix "$HOME/.local"
 ```
-for system-wide install, or 
-```bash
-meson setup build --prefix:$HOME/.local
-```
-for user-only install. this might be preferable! to avoid root only write access (in case you want to manually edit them)
+for user-only install. this is preferable! installing to the default `/usr/local` means `ccq` needs to be run as root to update your cards
 
 then:
 ```bash

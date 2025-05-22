@@ -384,8 +384,10 @@ review_list(const char *sl_path, const char order)
 	/* ------------- */
 	if (reviewed_count) {
 		fd = open(sl_path, O_RDWR);
-		if (fd < 0)
-			die("second file open failed\n");
+		if (fd < 0) {
+			perror("\n");
+			die("second file open failed at %s\n", sl_path);
+		}
 	}
 
 	for (int i = 0; i < reviewed_count; ++i) {
@@ -1031,7 +1033,7 @@ void *err_malloc
 char*
 build_ccq_path(const char *suffix)
 {
-	char *path = malloc(path_len);
+	char *path = err_malloc("path", path_len);
 
 	int n = snprintf(path, path_len, "%s/%s", CCQ_DATA_DIR, suffix);
 	if (n >= path_len)
@@ -1052,6 +1054,7 @@ void
 handle_signal(int sig)
 {
 	(void)sig;
+	printf("\nccq exiting...\n");
 	terminate = true;
 }
 
