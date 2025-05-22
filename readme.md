@@ -64,16 +64,22 @@ db includes the dictionaries i use. they're in a simple format, pipe-delimited j
 
 Monolingual:
 
-* 中华成语大词典
-* 现代汉语词典
-* 现代汉语规范词典
 * 两岸词典
+* 中华成语大词典
+* 新华字典 
+* 现代汉语规范词典
+* 现代汉语词典
+* zdic
 
 Bilingual:
 
 * Oxford English-Chinese dictionary
 * Wenlin ABC
 * 500 Idioms
+
+they are formatted such that one line is one definition; then the user can just choose from an index to copy the desired definition into their study list
+
+any yomitan `term_bank_*.json` formatted dictionary is easily converted to `ccq` psv format. note that this is a destructive process, it's a "lossy" conversion (only key, pinyin, definitions are kept). moreover, i like to have my files simple and clean: lexicographical information (part of speech markers, for example) is aggressively removed. to me, they only add noise
 
 ### nvim
 
