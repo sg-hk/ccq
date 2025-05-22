@@ -60,8 +60,6 @@ that's it!
 ### misc
 #### dictionaries included
 
-**decompress the db file in your data directory! `lz4 --decompress db.lz4`**
-
 db includes the dictionaries i use. they're in a simple format, pipe-delimited just like the study lists, which makes awk and grep happy, and which makes the database a breeze to browse and hack into whatever workflow you enjoy
 
 Monolingual:
