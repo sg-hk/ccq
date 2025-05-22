@@ -994,7 +994,7 @@ search_db(const char *db_path, const char *key, const int klen)
 		cur = next;
 	}
 
-	long *db_ret = malloc(2 * sizeof(long));
+	off_t *db_ret = malloc(2 * sizeof(long));
 	if (!db_ret)
 		die("malloc db_ret failed in bsearch\n");
 	db_ret[0] = start;
