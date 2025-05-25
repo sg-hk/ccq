@@ -965,7 +965,7 @@ search_db(const char *db_path, const char *key, const int klen)
 		/* test if that line matches */
 		lseek(fd, cand, SEEK_SET);
 		if (cmp_key(fd, key, klen) == 0) {
-			start = cand;    /* move up to that earlier duplicate */
+			start = cand;    /* move up to that earlier candidate */
 		} else {
 			break;
 		}
@@ -1015,7 +1015,6 @@ die(const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
 
-    fprintf(stderr, "Error: ");
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\n");
 
