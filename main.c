@@ -1,37 +1,106 @@
-#define _POSIX_C_SOURCE 200809L /* make ninja shut up */
-
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <locale.h>
 #include <math.h>
 #include <signal.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "config.h"
+/* CONFIG CONSTANTS */
+/* file paths and names */
+static const char datadir[] = "/.local/share/ccq/";
+static const char db[]      = "db.bin";
+static const char sl[]      = "zh";
 
-char 	get_instant_char(void);
-char   *build_ccq_path(const char *suffix);
-int 	cmp_key(int fd, const char *key, const int klen);
-long	schedule(int g,int reps,double s,double d,double elap,double rd);
-off_t 	search_sl(const char *sl_path, const char *key, int klen);
-off_t  *search_db(const char *db_path, const char *key, int klen);
-void	die(const char *fmt, ...);
-void	handle_signal(int sig);
-void	query(const char *key, const char *database_path, const char *study_list_path);
-void	usage(void);
-void 	review_list(const char *study_list_path, char order);
-void   *err_malloc(const char *varname, size_t size);
+/* keys that count as 'pass' */
+static const char pass_chs[] = {'\n', 'p', 'P', ' '};
 
-const int  epoch_len = 10;
-const int  fsrs_len  = 12;
-const int  path_len  = 128;
-volatile sig_atomic_t terminate = false;
+/* 'r'andom, 'o'ldest, 'n'ewest */
+static const char default_order = 'r';
+
+/* db.bin's header */
+static const char magic[] = "CUNCHUQI";
+
+/* DATA STRUCTURES */
+/* TODO: data-oriented design with bitpacking */
+typedef struct {
+	int     ct, cap;
+	time_t *epochs;
+	char  **epoch_ptrs, **fsrs_ptrs, **fronts, **backs;
+	int    *fr_lens, *bk_lens;
+} DueCards;
+
+typedef struct {
+	int   found;
+	char *line_start;
+	off_t offset;
+	char *fr_ptr;
+	int   fr_len;
+	char *bk_ptr;
+	int   bk_len;
+} SLRes;
+
+typedef struct {
+	char     magic[8];
+	uint32_t entryct;
+	uint32_t str_size;
+} DBHeader;
+
+typedef struct {
+	uint32_t key_off;
+	uint32_t dname_off;
+	uint32_t back_off;
+} DBRec;
+
+typedef struct {
+	const char *key;
+	const char *dname;
+	const char *back;
+} DBMatch;
+
+typedef struct {
+	int      ct;
+	DBMatch *matches;
+	char    *mmap_addr;
+	size_t   mmap_len;
+} DBRes;
+
+typedef struct {
+	const char *key;
+	const char *str_base;
+} KeyInfo;
+
+/* OTHER CONSTANTS */
+/* user interaction messages
+ * it's easier to edit them all gathered up here */
+static const char choice_prompt[]   = "\n输入编号，或直接回车：";
+static const char fail_msg[]        = "\n未通过\n\n";
+static const char keyfound_msg[]    = "该词已在学习列表。\n";
+static const char keynotfound_msg[] = "词库中未找到该词。\n";
+static const char nocards_msg[]     = "暂无可复习的卡片。\n";
+static const char num_too_big[]     = "编号超出范围，请重试。\n";
+static const char pass_msg[]        = "\n通过\n\n";
+static const char start_msg[]       = "存储器… \033[1m开始！\033[22m 待复习：";
+static const char exit_msg[]        = "用户退出…\n";
+static const char weird_input[]     = "非法输入，请输入数字。\n";
+
+/* field constants */
+static const int  epoch_len   = 10;
+static const int  fsrs_len    = 12;
+static const char fsrs_init[] = "00;0250;0500"; 
+
+/* signal handling */
+static volatile sig_atomic_t terminate = 0;
+static int term_sig  = 0;
 
 /* fsrs constants */
 static const double W[19]={
@@ -39,668 +108,630 @@ static const double W[19]={
 	1.54575,0.11920,1.01925,1.93950,0.11000,0.29605,2.26980,0.23150,
 	2.98980,0.51655,0.66210
 };
-#define F (19.0/81.0)
-#define C (-0.5)
+static const float F = 19.0/81.0;
+static const float C = -0.5;
 
+/* FUNCTIONS */
+DBRes search_db(const char *key, int klen, const char *dbpath);
+SLRes search_sl(const char *slpath, const char *key, int klen, char **out_addr, size_t *out_length);
+char *build_ccq_path(const char *suffix);
+char  get_instant_char(void);
+long  schedule(int g,int reps,double s,double d,double elap,double rd);
+int   cmp_keys(const void *key_info, const void *db_rec);
+void *err_malloc(const char *varname, size_t size);
+void  die(const char *fmt, ...);
+void  handle_signal(int sig);
+void  query(const char *key, const char *dbpath, const char *slpath);
+void  review_list(const char *slpath, char order);
+void  usage(void);
+
+/* START */
 int
 main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "");
 
-	bool    want_query = false;
-	char   *database   = NULL;
-	char   *key        = NULL;
-	char   *study_list = NULL;
-	int     ch         = 0;
-	int     order      = 0;
+	char  *home, *key;
+	char   ch, order, doquery;
+	char   slpath[PATH_MAX], dbpath[PATH_MAX];
+	struct sigaction sa;
 
-	/* reviewing flags: n, o, r (mutually exclusive, optional) */
-	/* query flags: q (necessary), s, d (optional) 		   */
-	while ((ch = getopt(argc, argv, "norq:d:s:")) != -1) {
+	sa.sa_handler = handle_signal;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sigaction(SIGINT, &sa, NULL);  /* ctrl c */
+	sigaction(SIGTERM, &sa, NULL); /* ctrl d */
+	sigaction(SIGHUP, &sa, NULL);  /* WM close window */
+
+	order = 0, doquery = 0;
+	while ((ch = getopt(argc, argv, "norq:")) != -1) {
 		switch (ch) {
-		case 'n':
-			order = 'n';
-			break;
-		case 'o':
-			if (order)
+			case 'n': 
+				order = 'n'; 
+				break;
+			case 'o': 
+				if (order) 
+					usage(); 
+				order = 'o'; 
+				break;
+			case 'r': 
+				if (order) 
+					usage(); 
+				order = 'r'; 
+				break;
+			case 'q': 
+				if (order)
+					usage();
+				doquery = 1; 
+				key = optarg; 
+				break;
+			default: 
 				usage();
-			order = 'o';
-			break;
-		case 'r':
-			if (order)
-				usage();
-			order = 'r';
-			break;
-		case 'q':
-			want_query = true;
-			key = optarg;
-			break;
-		case 'd':
-			database = optarg;
-			break;
-		case 's':
-			if (study_list)
-				usage();
-			study_list = optarg;
-			break;
-		default:
-			usage();
 		}
 	}
 	argc -= optind;
 	argv += optind;
-	
-	struct sigaction sa;
-	sa.sa_handler = handle_signal;
-	sigemptyset(&sa.sa_mask); /* don't block other signals */
-	sa.sa_flags = 0; /* no special flags */
 
-	if (sigaction(SIGINT, &sa, NULL) == -1) {
-		perror("can't handle SIGINT");
-		return 1; 
-	}
+	if (argc) 
+		die("extra arg [%s]", argv[0]);
 
-	if (want_query) {
-		if (argc) {
-			fprintf(stderr, "extraneous arg: [%s]\n", argv[0]);
-			usage();
-		}
-		/* forbid mixing query and review flags */
-		if (order)
-			usage();
+	home = getenv("HOME");
+	if (!home)
+		die("home envp not set");
+	snprintf(slpath, sizeof(slpath),"%s%s%s", 
+			home, datadir, sl);
+	snprintf(dbpath, sizeof(dbpath), "%s%s%s", 
+			home, datadir, db);
 
-		if (!database) {
-			database = build_ccq_path(DEFAULT_DB);
-		} else {
-			database = build_ccq_path(database);
-		}
+	if (!order)
+		order = default_order;
 
-		if (!study_list) {
-			study_list = build_ccq_path(DEFAULT_SL);
-		} else {
-			study_list = build_ccq_path(study_list);
-		}
+	if (doquery)
+		query(key, dbpath, slpath);
+	else 
+		review_list(slpath, order);
 
-		query(key, database, study_list);
-	} else {
-		if (!order)
-			order = DEFAULT_ORDER;
-
-		if (!study_list) {
-			if (argc != 1) {
-				fprintf(stderr, "missing study list arg\n");
-				usage();
-			}
-			study_list = build_ccq_path(argv[0]);
-		} else
-			study_list = build_ccq_path(study_list);
-
-		review_list(study_list, order);
-	}
-	
-	if (database)
-		free(database);
-	free(study_list);
 	return 0;
 }
 
+/* parses study list for due cards, quizzes user, updates fields */
 void
-review_list(const char *sl_path, const char order)
+review_list(const char *slpath, const char order)
 {
-	int fd = open(sl_path, O_RDONLY);
-	if (fd == -1) {
-		fprintf(stderr, "couldn't open file at %s\n", sl_path);
-		perror("");
-		exit(1);
-	}
+	DueCards dues;
+	char    *addr, *cur, *end;
+	char    *res_arr;
+	char     tmp_char;
+	int      fd, revct, nel_pass;
+	int     *rev_ord;
+	size_t   length;
+	struct   stat sb;
+	time_t   now;
 
-	off_t pos           = 0;
-	time_t 	now         = time(NULL);
-	int 	due_cnt     = 0;
-	int 	due_cnt_buf = 64;
-
-	time_t *epoch_old = err_malloc("epoch_old", due_cnt_buf * sizeof(time_t));
-	off_t  *fsrs_pos  = err_malloc("fsrs_pos", due_cnt_buf * sizeof(off_t));
-	int    *front_len = err_malloc("front_len", due_cnt_buf * sizeof(int));
-	int    *back_len  = err_malloc("back_len", due_cnt_buf * sizeof(int));
-
-	for (;;) {
-		ssize_t n 	 = 0;
-		bool 	is_due   = false;
-		bool	is_fsrs	 = false;
-		bool	is_front = false;
-		bool	is_back	 = false;
-		char 	epoch_str[epoch_len];
-
-		n = read(fd, epoch_str, epoch_len);
-		if (n == 0) /* EOF before epoch */
-			break;
-		if (n != 10) 
-			die("epoch field read error\n");
-		pos += epoch_len;
-
-		time_t epoch = 0;
-		/* atoi with user input check */
-		for (int i = 0; i < epoch_len; ++i) {
-			if (epoch_str[i] < '0' || epoch_str[i] > '9')
-				die("non digit char in epoch\n");
-			epoch = epoch * 10 + (epoch_str[i] - '0');
-		}
-
-		if (epoch <= now) {
-			if (due_cnt >= due_cnt_buf) {
-				due_cnt_buf *= 2;
-				time_t *tepo = realloc(epoch_old, due_cnt_buf * sizeof(time_t));
-				off_t *tpos  = realloc(fsrs_pos, due_cnt_buf * sizeof(off_t));
-				int *tfrlen  = realloc(front_len, due_cnt_buf * sizeof(int));
-				int *tbklen  = realloc(back_len, due_cnt_buf * sizeof(int));
-				if (!tepo || !tpos || !tfrlen || !tbklen)
-					die("realloc fsrs_pos failed\n");
-				epoch_old = tepo;
-				fsrs_pos  = tpos;
-				front_len = tfrlen;
-				back_len  = tbklen;
-			}
-			epoch_old[due_cnt] = epoch;
-			fsrs_pos[due_cnt]  = pos + 1; /* EPOCH|FSRS -> +1 to skip pipe */
-			is_due             = true;
-			++due_cnt;
-		}
-
-		/* skip rest of line
-		 * when the card is due we want to store length of due fields
-		 * these two local vars help us quickly calculate them */
-		long front_start = 0;
-		long back_start  = 0;
-		int  has_newline = 0;
-		int  ch          = 0;
-		do {
-			n = read(fd, &ch, 1);
-			if (n == 0) { /* EOF inside record: last record */
-				if (is_due)
-					back_len[due_cnt-1] = pos - back_start;
-				break;
-			}
-			if (n < 0)
-				die("read error when draining line\n");
-			++pos;
-
-			if (ch == '\n') /* ensures we remove \n from pos count */
-				has_newline = 1;
-
-			if (!is_due)
-				continue;
-
-			if (ch == '|') {
-				/* identify where we are: |FSRS|FRONT|BACK */
-				if (!is_fsrs) {
-					is_fsrs = 1;
-					front_start = fsrs_pos[due_cnt-1] + fsrs_len + 1;
-				} else if (!is_front) {
-					is_front = 1;
-				} else if (!is_back) {
-					/* we are at |BACK, front ends 1 before */
-					front_len[due_cnt-1] = pos - front_start - 1;
-					back_start = pos;
-					is_back = 1;
-				} 
-			}
-		} while (ch != '\n');
-
-		if (is_due) 
-			back_len[due_cnt-1] = pos - back_start - has_newline;
-
-		if (n == 0)  /* EOF after record */
-			break;
-	}
-
-
-	if (due_cnt == 0)
-		die("no cards due\n");
-
-	/* ----------- */
-	/* copy fields */
-	/* ----------- */
-	char **back  = err_malloc("back", due_cnt * sizeof(char*));
-	char **front = err_malloc("front", due_cnt * sizeof(char*));
-	char **fsrs  = err_malloc("fsrs", due_cnt * sizeof(char*));
-
-	int ch = 0;
-	for (int i = 0; i < due_cnt; ++i) {
-		front[i] = err_malloc("front[i]", front_len[i]);
-		back[i]  = err_malloc("back[i]", back_len[i]);
-		fsrs[i]  = err_malloc("fsrs[i]", fsrs_len);
-
-		if (lseek(fd, fsrs_pos[i], SEEK_SET) < 0)
-			die("lseek to copy fields failed\n");
-
-		/* copy fsrs */
-		if (read(fd, fsrs[i], fsrs_len) != fsrs_len)
-			die("read to copy fsrs failed\n");
-
-		/* skip pipe */
-		read(fd, &ch, 1);
-
-		/* copy front */
-		if (read(fd, front[i], front_len[i]) != front_len[i])
-			die("read to copy fsrs failed\n");
-		
-		/* skip pipe */
-		read(fd, &ch, 1);
-
-		/* copy back */
-		if (read(fd, back[i], back_len[i]) != back_len[i])
-			die("read to copy fsrs failed\n");
-	}
-
+	
+	/* we open the study list, mmap it for read/write and close it */
+	fd = open(slpath, O_RDWR);
+	if (fd < 0 || fstat(fd, &sb) < 0) 
+		die("review_list: open/fstat %s", slpath);
+	length = sb.st_size;
+	if (!length)
+		die("empty sl");
+	addr = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (addr == MAP_FAILED) die("review_list: mmap sl");
 	close(fd);
 
-	/* ------ */
-	/* review */
-	/* ------ */
-	int *review_order = err_malloc("review_order", due_cnt * sizeof(int));
+	/* prepare the vars */
+	dues.ct = 0;
+	dues.cap = 64;
+	dues.epochs      = err_malloc("dues.epochs", dues.cap * sizeof(time_t));
+	dues.epoch_ptrs  = err_malloc("dues.epoch_ptrs", dues.cap * sizeof(char *));
+	dues.fsrs_ptrs   = err_malloc("dues.fsrs_ptrs", dues.cap * sizeof(char *));
+	dues.fronts      = err_malloc("dues.fronts", dues.cap * sizeof(char *));
+	dues.backs       = err_malloc("dues.backs", dues.cap * sizeof(char *));
+	dues.fr_lens     = err_malloc("dues.fr_lens", dues.cap * sizeof(int));
+	dues.bk_lens     = err_malloc("dues.bk_lens", dues.cap * sizeof(int));
 
-	/* oldest first order (line 0 to line n = order of creation) 
-	 * this is the default to which we apply transformations
-	 * i.e. this is the order == 'o' case */
-	for (int i = 0; i < due_cnt; ++i)
-		review_order[i] = i;
+	now = time(NULL);
+	cur = addr;
+	end = addr + length;
 
-	/* newest first: reverse */
-	if (order == 'n') {
-		for (int i = 0; i < due_cnt / 2; ++i) {
-			int tmp = review_order[i];
-			review_order[i] = review_order[due_cnt - 1 - i];
-			review_order[due_cnt - 1 - i] = tmp;
+	/* gather due cards */
+	for (;;) {
+		char   *line_end, *epoch_p, *fsrs_p, *front_p, *back_p;
+		time_t  tmp_epoch;
+
+		if (terminate) 
+			die("%s", strsignal(term_sig));
+		if (cur >= end) /* EOF */
+			break;
+
+		/* stretch struct */
+		if (dues.ct >= dues.cap) {
+			dues.cap *= 2;
+			dues.epochs     = realloc(dues.epochs, dues.cap * sizeof(time_t));
+			dues.epoch_ptrs = realloc(dues.epoch_ptrs, dues.cap * sizeof(char *));
+			dues.fsrs_ptrs  = realloc(dues.fsrs_ptrs, dues.cap * sizeof(char *));
+			dues.fronts     = realloc(dues.fronts, dues.cap * sizeof(char *));
+			dues.backs      = realloc(dues.backs, dues.cap * sizeof(char *));
+			dues.fr_lens    = realloc(dues.fr_lens, dues.cap * sizeof(int));
+			dues.bk_lens    = realloc(dues.bk_lens, dues.cap * sizeof(int));
+			if (!dues.epochs || !dues.fsrs_ptrs || !dues.fronts || !dues.backs ||
+			    !dues.fr_lens || !dues.bk_lens)
+				die("review_list realloc");
 		}
 
-	/* random: Fisher–Yates shuffle */
+		/* get the pointers to determine start/end of:
+		 * - line
+		 * - epoch field
+		 * - front field
+		 * - back field 
+		 *  given this formatting:
+		 *  EPOCH|FSRS|FRONT|BACK\n */
+
+		line_end = memchr(cur, '\n', end - cur);
+		if (!line_end) /* EOF */
+			line_end = end;
+		epoch_p = cur;
+
+		/* first check if due to skip the rest of the logic */
+		tmp_char           = epoch_p[epoch_len];
+		epoch_p[epoch_len] = '\0';
+		tmp_epoch          = (time_t)strtol(epoch_p, NULL, 10);
+		epoch_p[epoch_len] = tmp_char;
+		if (tmp_epoch > now) 
+			goto end_gather_loop_review;
+
+		/* card is due, get rest of fields */
+		fsrs_p  = epoch_p + epoch_len + 1;
+		front_p = fsrs_p + fsrs_len + 1;
+		back_p  = memchr(front_p, '|', line_end - front_p);
+
+		/* populate struct */
+		dues.epochs[dues.ct]     = tmp_epoch;
+		dues.epoch_ptrs[dues.ct] = epoch_p;
+		dues.fsrs_ptrs[dues.ct]  = fsrs_p;
+		dues.fronts[dues.ct]     = front_p;
+		dues.fr_lens[dues.ct]    = back_p - front_p;
+		dues.backs[dues.ct]      = back_p + 1;
+		dues.bk_lens[dues.ct]    = line_end - (back_p + 1);
+
+		/* increment and go to next line */
+		++dues.ct;
+end_gather_loop_review:
+		cur = line_end + 1;
+		if (line_end == end) 
+			break;
+	}
+
+	if (dues.ct == 0)
+		die(nocards_msg);
+
+	/* review the gathered cards according to flags
+	 * 'r'andom, 'o'ldest first or 'n'ewest first */
+	rev_ord = err_malloc("rev_ord", dues.ct * sizeof(int));
+	/* -o: no change, since study lists are append-only */
+	for (int i = 0; i < dues.ct; ++i) 
+		rev_ord[i] = i;
+	if (order == 'n') {
+		/* reverse order */
+		for (int i = 0; i < dues.ct / 2; ++i) {
+			int tmp                  = rev_ord[i];
+			rev_ord[i]               = rev_ord[dues.ct - 1 - i];
+			rev_ord[dues.ct - 1 - i] = tmp;
+		}
 	} else if (order == 'r') {
+		/* Fischer-Yates shuffle */
 		srand(now);
-		for (int i = due_cnt - 1; i > 0; --i) {
-			int j = rand() % (i + 1); /* [0,i] */
-			int tmp = review_order[i];
-			review_order[i] = review_order[j];
-			review_order[j] = tmp;
+		for (int i = dues.ct - 1; i > 0; --i) {
+			int j      = rand() % (i + 1);
+			int tmp    = rev_ord[i];
+			rev_ord[i] = rev_ord[j];
+			rev_ord[j] = tmp;
 		}
 	}
 
-	printf("ccq... \033[1mSTART!\033[22m  %d cards due\n\n", due_cnt);
+	printf("%s%d张\n\n", start_msg, dues.ct);
 
-	int reviewed_count = 0;
-	char *res_arr = err_malloc("res_arr", due_cnt);
-	int nel_passch = sizeof(PASS_CHARS) / sizeof(PASS_CHARS[0]);
-	for (; reviewed_count < due_cnt; ++reviewed_count) {
-		if (terminate)
+	revct = 0;
+	res_arr = err_malloc("res_arr", dues.ct);
+	nel_pass = sizeof(pass_chs) / sizeof(pass_chs[0]);
+
+	/* user quizz loop */
+	for (; revct < dues.ct; ++revct) {
+		if (terminate) 
 			break;
+		int k = rev_ord[revct];
+		int user_ch;
+		int is_passed = 0;
 
-		int k = review_order[reviewed_count];
-		int ch = 0;
-
-		/* show front */
-		printf("[%d/%d]  ", reviewed_count+1, due_cnt);
+		/* show front, wait for any key */
+		printf("[%d/%d]  ", revct + 1, dues.ct);
+		printf("%.*s", dues.fr_lens[k], dues.fronts[k]);
 		fflush(stdout);
-		if (front[k] == NULL)
-			die("front[%d] is NULL\n", k);
-		write(1, front[k], front_len[k]);
-		ch = get_instant_char();
-		if (ch == EOF) {
-			terminate = true;
-			break;
-		}
+		user_ch = get_instant_char();
+		if (user_ch == EOF) { terminate = 1; break; }
 
-		/* show back, store user answer */
-		if (back[k] == NULL)
-			die("back[%d] is NULL\n", k);
-		write(1, "\n", 1);
-		write(1, back[k], back_len[k]);
-		ch = get_instant_char();
-		if (ch == EOF) {
-			terminate = true;
-			break;
-		} 
+		/* show back, store key */
+		printf("\n");
+		printf("%.*s", dues.bk_lens[k], dues.backs[k]);
+		fflush(stdout);
+		user_ch = get_instant_char();
+		if (user_ch == EOF) { terminate = 1; break; }
 
-		/* show result */
-		bool is_passed = false;
-		for (int i = 0; i < nel_passch; ++i) {
-			if (ch == PASS_CHARS[i]) {
-				is_passed = true;
+		/* match key against passing characters' array */
+		for (int i = 0; i < nel_pass; ++i) {
+			if (user_ch == pass_chs[i]) {
+				is_passed = 1;
 				res_arr[k] = 1;
-				write(1, "\nPASS\n\n", 7);
+				write(1, pass_msg, sizeof(pass_msg) - 1);
 				break;
 			}
 		}
-
 		if (!is_passed) {
 			res_arr[k] = 0;
-			write(1, "\nFAIL\n\n", 7);
+			write(1, fail_msg, sizeof(fail_msg) - 1);
 		}
 	}
 
-	for (int i = 0; i < due_cnt; ++i) {
-		free(front[i]);
-		free(back[i]);
-	}
-	free(front);
-	free(back);
+	if (terminate)
+		printf("\n\n[%s]... updating cards and exiting\n", strsignal(term_sig));
 
-	/* ------------- */
-	/* update fields */
-	/* ------------- */
-	if (reviewed_count) {
-		fd = open(sl_path, O_RDWR);
-		if (fd < 0) {
-			perror("\n");
-			die("second file open failed at %s\n", sl_path);
-		}
-	}
+	/* reschedule according to stored result */
+	for (int i = 0; i < revct; ++i) {
+		int k = rev_ord[i];
+		int grade, reps, new_reps;
+		double stab, diff, elap, nxt;
+		time_t new_epoch;
+		char new_epoch_str[epoch_len + 1];
+		char new_fsrs_str[fsrs_len + 1];
 
-	for (int i = 0; i < reviewed_count; ++i) {
-		int k = review_order[i];
+		/* parse fsrs field */
+		dues.fsrs_ptrs[k][2] = '\0';
+		reps = strtol(dues.fsrs_ptrs[k], NULL, 10);
+		dues.fsrs_ptrs[k][2] = ';';
+		dues.fsrs_ptrs[k][7] = '\0';
+		stab = strtol(dues.fsrs_ptrs[k] + 3, NULL, 10) / 100.0;
+		dues.fsrs_ptrs[k][7] = ';';
+		diff = strtol(dues.fsrs_ptrs[k] + 8, NULL, 10) / 100.0;
 
-		/* scheduler args */
-		int    grade = res_arr[k] ? 3 : 1; /* good : again */
-		double stab  = strtol(fsrs[k] + 3, 0, 10) / 100.0; 
-		double diff  = strtol(fsrs[k] + 8, 0, 10) / 100.0; 
-		int    reps  = (fsrs[k][0]-'0')*10 + (fsrs[k][1]-'0');
-		double elap  = (double)(now - epoch_old[k]) / 86400.0;
+		/* call the scheduler function */
+		grade = res_arr[k] ? 3 : 1;
+		elap  = (double)(now - dues.epochs[k]) / 86400.0;
+		/* we get the interval to add, in seconds */
+		nxt   = schedule(grade, reps, stab, diff, elap, 0.9);
 
-		/* interval to add, in seconds */
-		double nxt   = schedule(grade, reps, stab, diff, elap, 0.9); 
+		/* derive the new vars */
+		new_epoch = now + (time_t)(nxt + 0.5);
+		new_reps  = (grade == 1) ? 0 : (reps < 99 ? reps + 1 : 99);
+		stab      = (grade == 1) ? 2.50 : stab + stab / 4.0 + 0.25;
+		if (stab > 99.99) 
+			stab = 99.99;
+		diff      = (grade == 1) ? 5.00 : (diff > 1.25 ? diff - 0.25 : 1.00);
 
-		/* due date epoch */
-		time_t new_epoch = now + (time_t)(nxt + 0.5);  /* round */
+		/* overwrite the fixed fields (date and fsrs) */
+		snprintf(new_epoch_str, sizeof(new_epoch_str), "%-*ld", (int)epoch_len, new_epoch);
+		snprintf(new_fsrs_str, sizeof(new_fsrs_str), "%02d;%04d;%04d",
+				new_reps, (int)(stab * 100 + 0.5), (int)(diff * 100 + 0.5));
 
-		/* updating fsrs vars for the card */
-		int  new_reps = (grade == 1) ? 0 : (reps < 99 ? reps + 1 : 99);
-		stab = (grade == 1) ? 2.50 : stab + stab / 4.0 + 0.25;
-		if (stab > 99.99) stab = 99.99;
-		diff = (grade == 1) ? 5.00 : (diff > 1.25 ? diff - 0.25 : 1.00);
-
-		/* numbers to ASCII... a little verbose */
-		char epoch_str[epoch_len];
-		time_t t = new_epoch;
-		for (int p = epoch_len - 1; p >= 0; --p) {
-			epoch_str[p] = (t % 10) + '0';
-			t /= 10;
-		}
-		char new_fsrs[fsrs_len];
-		new_fsrs[0] = new_reps / 10 + '0';
-		new_fsrs[1] = new_reps % 10 + '0';
-		new_fsrs[2] = ';';
-		int s100 = (int)(stab * 100 + 0.5);
-		new_fsrs[3] = (s100 / 1000)       + '0';
-		new_fsrs[4] = (s100 /  100) % 10  + '0';
-		new_fsrs[5] = (s100 /   10) % 10  + '0';
-		new_fsrs[6] =  s100 %   10        + '0';
-		new_fsrs[7] = ';';
-		int d100 = (int)(diff * 100 + 0.5);
-		new_fsrs[8]  = (d100 / 1000)       + '0';
-		new_fsrs[9]  = (d100 /  100) % 10  + '0';
-		new_fsrs[10] = (d100 /   10) % 10  + '0';
-		new_fsrs[11] =  d100 %   10        + '0';
-
-		/* overwrite date */
-		if (lseek(fd, fsrs_pos[k] - epoch_len - 1, SEEK_SET) < 0)
-			die("lseek date");
-		if (write(fd, epoch_str, epoch_len) != epoch_len)
-			die("write date");
-
-		/* overwrite the ‘|’ */
-		if (write(fd, "|", 1) != 1)
-			die("write pipe");
-
-		/* overwrite fsrs */
-		if (write(fd, new_fsrs, fsrs_len) != fsrs_len)
-			die("write fsrs");
+		memcpy(dues.epoch_ptrs[k], new_epoch_str, epoch_len);
+		memcpy(dues.fsrs_ptrs[k],  new_fsrs_str,  fsrs_len);
 	}
 
-	if (reviewed_count) close(fd);
-	free(back_len);
-	free(front_len);
-	free(fsrs);
-	free(fsrs_pos);
+	/* clean up everything */
+	munmap(addr, length);
+	free(dues.epochs); 
+	free(dues.epoch_ptrs); 
+	free(dues.fsrs_ptrs);
+	free(dues.fronts); 
+	free(dues.backs); 
+	free(dues.fr_lens); 
+	free(dues.bk_lens);
 	free(res_arr);
-	free(review_order);
-
+	free(rev_ord);
 	return;
 }
 
-void
-query(const char *key, const char *db_path, const char *sl_path)
+/* search for key in study list, return parsed struct or keeps field found = 0 */
+SLRes
+search_sl(const char *slpath, const char *key, const int klen,
+		char **out_addr, size_t *out_length)
 {
-	/* check if card exists: if it does, print and exit */
-	int klen = 0;
-	while (key[klen])
-		++klen;
-	off_t pos = search_sl(sl_path, key, klen);
-	if (pos != -1) {
-		int fd = open(sl_path, O_RDONLY);
-		lseek(fd, pos + klen + 1, SEEK_SET);
-		int ch = 0;
-		ssize_t n = 0;
-		do {
-			n = read(fd, &ch, 1);
-			if (n == 1)
-				continue;
-			if (n == 0)
-				die("reached sl EOF before reaching back\n");
-			if (n < 0)
-				die("read sl error\n");
-		} while (ch != '|');
+	SLRes res = {0};
+	char *addr, *cur, *end;
+	int fd;
+	struct stat sb;
 
-		int back_buf = 64;
-		int back_len = 0;
-		char *back = err_malloc("back", back_buf);
-		for (;;) {
-			if (back_len >= back_buf) {
-				back_buf *= 2;
-				char *tmp = realloc(back, back_buf);
-				if (!tmp)
-					die("back realloc failed\n");
-				back = tmp;
-			}
-			n = read(fd, &ch, 1);
-			if (n == 1) {
-				if (ch == '\n')
-					break;
-				back[back_len++] = ch;
-			}
-			if (n == 0)
-				die("reached sl EOF before reaching back\n");
-			if (n < 0)
-				die("read sl error\n");
-		}
+	*out_addr = NULL;
+	*out_length = 0;
 
-		char msg[] = "key found:\n";
-		write(1, msg, sizeof(msg)-1);
-		write(1, back, back_len);
-		free(back);
-		return;
-	}
-
-	/* if it doesn't, search the database and prompt user to add to sl */
-	off_t *db_ret = search_db(db_path, key, klen);
-	if (!db_ret)
-		die("key not found\n");
-	int fd = open(db_path, O_RDONLY);
-	if (fd < 0)
-		die("couldn't open db at %s\n", db_path);
-	char **dname = err_malloc("dname", db_ret[1] * sizeof(char*));
-	char **back = err_malloc("back",db_ret[1] * sizeof(char*));
-	int *back_len = err_malloc("back_len", db_ret[1] * sizeof(int));
-
-	int dictionary_max_len = 128;
-	int back_buf = 128;
-	for (int i = 0; i < db_ret[1]; ++i) { /* db_ret[1] = number of matches */
-		back_len[i] = 0;
-		dname[i] = err_malloc("dname[i]", dictionary_max_len);
-		back[i] = err_malloc("back[i]", back_buf);
-	}
-
-	/* db_ret[0] = first match pos */
-	if (lseek(fd, db_ret[0], SEEK_SET) < 0)
-		die("lseek db failed\n");
-
-	/* parse each matched line */
-	/* format: key|dname|back */
-	for (int i = 0; i < db_ret[1]; ++i) {
-		/* skip key and pipe */
-		char tmp[klen+1];
-		if (read(fd, tmp, klen+1) < 0)
-			die("read to skip key in add_card failed\n");
-
-		/* copy dname */
-		int idx = 0;
-		int ch = 0;
-		if (read(fd, &ch, 1) != 1) 
-			die("early EOF in dname\n");
-		do {
-			if (ch == '|') break;
-			if (idx + 1 == dictionary_max_len) 
-				die("dname too long\n");
-			dname[i][idx++] = ch;
-		} while (read(fd, &ch, 1) == 1);
-		if (ch != '|') 
-			die("unexpected EOF in key\n");
-
-		/* copy back */
-		idx = 0;
-		int cap = back_buf;
-		while (read(fd, &ch, 1) == 1 && ch != '\n') {
-			if (idx + 1 == cap) {
-				cap *= 2;
-				char *tmp = realloc(back[i], cap);
-				if (!tmp) 
-					die("realloc entry failed\n");
-				back[i] = tmp;
-			}
-			back[i][idx++] = ch;
-		}
-		/* no ch != '|' check: EOF indicates last record and is valid */
-
-		back_len[i] = idx;
-	}
-
+	/* open and mmap study list */
+	fd = open(slpath, O_RDONLY);
+	if (fd < 0 || fstat(fd, &sb) < 0) 
+		die("open sl");
+	addr = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (addr == MAP_FAILED) 
+		die("mmap sl");
 	close(fd);
 
-	/* write the key in bold ahead of matches print */
-	write(1, "\t\033[1m[", 6);
-	write(1, key, klen);
-	write(1, "]\n\033[0m", 6);
+	/* derive the mmap's variables */
+	*out_addr   = addr;
+	*out_length = sb.st_size;
+	cur         = addr;
+	end         = addr + *out_length;
 
-	/* user chooses definition */
-	for (int i = 0; i < db_ret[1]; ++i) {
-		/* print to stdout
-		 * [index] [dictionary] back 
-		 * using write() to avoid wchar.h */
+	/* linearly search file for key */
+	while (cur < end) {
+		char *line_start, *line_end, *fr_ptr, *bk_ptr;
+		int fr_len;
+
+		/* get the start/end of
+		 * - line
+		 * - front
+		 * - back */
+
+		line_start = cur;
+		line_end = memchr(cur, '\n', end - cur);
+		if (!line_end) /* EOF */
+			line_end = end;
+
+		fr_ptr = cur + epoch_len + fsrs_len + 2;
+		bk_ptr = memchr(fr_ptr, '|', line_end - fr_ptr);
+		fr_len = bk_ptr - fr_ptr;
+
+		/* first check for length (inexpensive)
+		 * then compare the keys and store match */
+		if (klen == fr_len && memcmp(fr_ptr, key, klen) == 0) {
+			res.found      = 1;
+			res.line_start = line_start;
+			res.offset     = line_start - addr;
+			res.fr_ptr     = fr_ptr;
+			res.fr_len     = fr_len;
+			res.bk_ptr     = bk_ptr + 1;
+			res.bk_len     = line_end - (bk_ptr + 1);
+			return res;
+		}
+
+		/* go to next line */
+		cur = line_end + 1;
+	}
+
+	/* returns 0: no match */
+	return res;
+}
+
+/* adds key to sl if found in db and not in sl; user chooses definition */
+void
+query(const char *key, const char *dbpath, const char *slpath)
+{
+	int klen;
+	char *sl_mmap_addr;
+	size_t sl_mmap_len;
+
+	/* simple 'count bytes' strlen, guaranteed to work with wide chars */
+	klen = 0;
+	while (key[klen])
+		++klen;
+
+	/* guard against duplicates */
+	SLRes sl_res = search_sl(slpath, key, klen, &sl_mmap_addr, &sl_mmap_len);
+	if (sl_res.found) {
+		printf("%s\n%.*s\n", keyfound_msg, sl_res.bk_len, sl_res.bk_ptr);
+		if (sl_mmap_addr) 
+			munmap(sl_mmap_addr, sl_mmap_len);
+		return;
+	}
+	if (sl_mmap_addr) 
+		munmap(sl_mmap_addr, sl_mmap_len);
+
+	/* search the database for a match
+	 * note that we already exit if no matches in search_db() */
+	DBRes db_res = search_db(key, klen, dbpath);
+
+	printf("\t\033[1m%s\033[0m\n", key);
+	for (int i = 0; i < db_res.ct; i++) {
+		/* print [index] [dictionary name] definition string */
 		printf("[%d] ", i);
-		fflush(stdout);
-
-		int dname_len = 0;
-		while(dname[i][dname_len])
-			++dname_len;
-		write(1, "[", 1);
-		write(1, dname[i], dname_len);
-		write(1, "] ", 2);
-
-		write(1, back[i], back_len[i]);
-		write(1, "\n", 1);
+		printf("[\033[36m%s\033[0m] ", db_res.matches[i].dname);
+		printf("%s\n", db_res.matches[i].back);
 	}
 
-	char msg[] = "choose index or quit (non digit keypress): ";
+	/* let user choose index */
+	int chosen_idx = -1, choice;
+	char input_buf[16];
+	char *endptr;
+
 choose_index:
-	write(1, msg, sizeof(msg)-1);
+	printf("%s", choice_prompt);
+	if (!fgets(input_buf, sizeof(input_buf), stdin)) 
+		die("query: read error");
+	if (input_buf[0] == '\n')
+		die(exit_msg);
 
-	int i = 0;
-	int max_digits = 4;
-	char *res_str = calloc(max_digits, sizeof(char));
-	if (!res_str)
-		die("calloc res_str failed\n");
-	for (;;) {
-		if (i >= max_digits) {
-			fprintf(stderr, "max: 9999\n");
-			free(res_str);
-			goto choose_index;
-		}
-		char ch = 0;
-		if (read(0, &ch, 1) != 1)
-			die("read error in user idx prompt\n");
-		if (ch == '\n') {
-			if (i == 0) {
-				/* user exits */
-				fprintf(stderr, "user exits\n");
-				exit(1);
-			} else {
-				/* user confirms their valid choice */
-				break;
-			}
-		}
-		if (ch < '0' || ch > '9') {
-			die("non digit keypress\n");
-		}
-		res_str[i++] = ch;
-	}
-	int res = 0;
-	for (int j = 0; j < i; ++j)
-		res = 10*res + (res_str[j] - '0');
-	free(res_str);
+	input_buf[strcspn(input_buf, "\n")] = '\0';
+	choice = (int)strtol(input_buf, &endptr, 10);
 
-	if (res >= db_ret[1]) {
-		fprintf(stderr, "value chosen is out bounds! choose again\n");
+	if (endptr == input_buf || *endptr != '\0') {
+		printf("%s", weird_input);
+		goto choose_index;
+	} else if (choice < 0 || choice >= db_res.ct) {
+		printf("%s", num_too_big);
 		goto choose_index;
 	}
 
-	/* final string format: epoch|fsrs_init|key|back\n */
-	int final_len = epoch_len + fsrs_len + klen + back_len[res] + 4;
-	char *final_str = err_malloc("final_str", final_len);
-	pos = 0;
+	chosen_idx = choice;
 
-	/* epoch itoa */
-	char epoch_str[epoch_len];
-	time_t t = time(NULL);
-	for (int p = epoch_len-1; p >= 0; --p) {
-		epoch_str[p] = (t % 10) + '0';
-		t /= 10;
-	}
+	/* build the string to append */
+	DBMatch *match;
+	time_t now;
+	int bk_len;
+	size_t final_len;
+	char *final_str;
 
-	/* fsrs string */
-	char *fsrs_init = "00;0250;0500";
+	match = &db_res.matches[chosen_idx];
+	now = time(NULL);
+	bk_len = 0;
+	while(match->back[bk_len])
+		++bk_len;
+	final_len = 20 + 1 + fsrs_len + 1 + klen + 1 + bk_len + 2;
+	final_str = err_malloc("final_str", final_len);
+	snprintf(final_str, final_len, "%ld|%s|%s|%s\n",
+		 now, fsrs_init, key, match->back);
 
-	/* build string manually */
-	for (int i = 0; i < epoch_len; ++i)
-		final_str[pos++] = epoch_str[i];
-	final_str[pos++] = '|';
-	for (int i = 0; i < fsrs_len; ++i)
-		final_str[pos++] = fsrs_init[i];
-	final_str[pos++] = '|';
-	for (int i = 0; i < klen; ++i)
-		final_str[pos++] = key[i];
-	final_str[pos++] = '|';
-	for (int i = 0; i < back_len[res]; ++i)
-		final_str[pos++] = back[res][i];
-	final_str[pos++] = '\n';
+	/* write, close, clean up */
+	int sl_fd = open(slpath, O_RDWR | O_APPEND | O_CREAT, 0644);
+	if (sl_fd < 0) 
+		die("query: open slpath");
+	write(sl_fd, final_str, final_len);
 
-	/* free everything */
-	for (int i = 0; i < db_ret[1]; ++i) {
-		free(dname[i]);
-		free(back[i]);
-	}
-	free(dname);
-	free(back);
-	free(back_len);
-	free(db_ret);
-
-	/* open sl, append, close */
-	fd = open(sl_path, O_RDWR | O_APPEND);
-	if (fd < 0)
-		die("couldn't open sl at %s to append card\n", sl_path);
-	write(fd, final_str, final_len);
+	close(sl_fd);
 	free(final_str);
-	close(fd);
-	return;
+	free(db_res.matches);
+	munmap(db_res.mmap_addr, db_res.mmap_len);
 }
 
+/* search for key in db, return array of results or dies */
+DBRes
+search_db(const char *key, int klen, const char *dbpath)
+{
+	DBRes res = {0};
+	int fd;
+	struct stat sb;
+	DBHeader *hdr;
+	DBRec *idx_table;
+	char *pool_base;
+
+	/* open and mmap the database */
+	fd = open(dbpath, O_RDONLY);
+	if (fd < 0 || fstat(fd, &sb) < 0)
+		die("db open");
+	res.mmap_len = sb.st_size;
+	res.mmap_addr = mmap(NULL, res.mmap_len, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (res.mmap_addr == MAP_FAILED) 
+		die("mmap db");
+	close(fd);
+	
+	/* the database is structured this way:
+	 * 	1. 16 byte header
+	 * 		- 8 byte magic string
+	 * 		- 4 byte entry count
+	 * 		- 4 byte string pool size
+	 * 	2. 20*ct byte metadata block
+	 * 	3. string pool 
+	 */
+
+	/* first check for file integrity (header) */
+	hdr = (DBHeader*)res.mmap_addr;
+	if (strncmp(hdr->magic, magic, sizeof(hdr->magic))) 
+		die("db corrupted");
+	if (hdr->entryct == 0)
+		die("no entries in db");
+
+	/* skip header to get to metadata */
+	idx_table = (DBRec*)(res.mmap_addr + sizeof(DBHeader));
+
+	/* skip metadata to get to string pool */
+	pool_base = res.mmap_addr + sizeof(DBHeader) + (hdr->entryct * sizeof(DBRec));
+
+	/* now bsearch the key array for a match */
+	KeyInfo q_info = { key, pool_base };
+	DBRec *found_rec = bsearch(&q_info, idx_table, hdr->entryct, sizeof(DBRec), cmp_keys);
+
+	if (!found_rec)
+		die(keynotfound_msg);
+
+	long first, cur;
+	int ct;
+
+	/* temporary assign first to bsearch's match */
+	first = found_rec - idx_table;
+
+	/* go backward to first match */
+	while (first > 0 &&
+	       cmp_keys(&q_info, &idx_table[first - 1]) == 0)
+		--first;
+
+	/* go forward to last match */
+	cur = first;
+	ct = 0;
+	while (cur < (long)hdr->entryct &&
+			cmp_keys(&q_info, &idx_table[cur]) == 0) {
+		++ct;
+		++cur;
+	}
+
+	/* populate the results array */
+	res.ct = ct;
+	res.matches = err_malloc("DB_MatchView array", res.ct * sizeof(DBMatch));
+	for (int i = 0; i < res.ct; i++) {
+		DBRec *rec    = &idx_table[first + i];
+		DBMatch *view = &res.matches[i];
+		view->key     = pool_base + rec->key_off;
+		view->dname   = pool_base + rec->dname_off;
+		view->back    = pool_base + rec->back_off;
+	}
+
+	return res;
+}
+
+/* comparison fucntion for bsearch */
+int
+cmp_keys(const void *query_key_info_void, const void *db_record_void)
+{
+	const KeyInfo *q_info  = (const KeyInfo *)query_key_info_void;
+	const DBRec *rec       = (const DBRec *)db_record_void;
+	const char *db_key_str = q_info->str_base + rec->key_off;
+	return strcmp(q_info->key, db_key_str);
+}
+
+/* prints error if any, message, rests ernno and exits */
+void 
+die(const char *fmt, ...) 
+{
+	va_list args;
+	va_start(args, fmt);
+
+	if (errno)
+		perror("");
+	vfprintf(stderr, fmt, args);
+	fprintf(stderr, "\n");
+
+	errno = 0;
+
+	va_end(args);
+	exit(1);
+}
+
+/* malloc with die on null */
+void *err_malloc
+(const char *var, size_t size) 
+{
+	void *ptr = malloc(size);
+	if (!ptr) {
+		fprintf(stderr, "malloc for %s (%zu bytes) failed: \n", var, size);
+		perror("");
+		exit(1);
+	}
+	return ptr;
+}
+
+/* print usage and exit */
+void 
+usage(void) 
+{
+	fprintf(stderr, "usage: ccq -nor <study_list>\n");
+	fprintf(stderr, "       ccq -q <key> -d <database> -s <study_list>\n");
+	exit(1);
+}
+
+/* store signal and exit */
+void
+handle_signal(int sig)
+{
+	term_sig = sig;
+	terminate = 1;
+}
+
+/* get single char from user without echo or return */
 char
 get_instant_char(void)
 {
@@ -726,7 +757,7 @@ get_instant_char(void)
 		else 
 			die("read user input failed\n");
 	} else if (n == 0) { /* EOF on stdin (e.g., Ctrl+D) */
-		terminate = true;
+		terminate = 1;
 		return EOF;
 	}
 
@@ -734,339 +765,7 @@ get_instant_char(void)
 	return EOF;
 }
 
-off_t
-search_sl(const char *sl_path, const char *key, const int klen)
-{
-	char ch;
-	char *buf;
-	int fd, match;
-	off_t offset;
-	ssize_t n;
-
-	const int skip_len = epoch_len + fsrs_len + 2;
-	buf = err_malloc("buf", skip_len);
-
-	fd = open(sl_path, O_RDONLY);
-	if (fd < 0)
-		die("couldn't open sl at %s for search\n", sl_path);
-
-	offset = 0;
-	for (;;) {
-		offset = lseek(fd, 0, SEEK_CUR);
-		if (offset < 0)
-			die("lseek in search_sl failed\n");
-
-		/* skip epoch|fsrs| */
-		n = read(fd, buf, skip_len);
-		if (n < 0)
-			die("error skipping fsrs and epoch in search_sl\n");
-		if (n < skip_len) {
-			/* this condition gets triggered at EOF */
-			close(fd);
-			free(buf);
-			return -1;
-		} 
-
-		/* match key */
-		match = 1;
-		for (int i = 0; i < klen; ++i) {
-			/* we should never reach EOF in key */
-			if (read(fd, &ch, 1) != 1) 
-				die("error read key field in search_sl\n");
-			if (ch != key[i]) {
-				match = 0;
-				break;
-			}
-		}
-
-		if (match) {
-			/* the key has been matched but we need to forbid partial matches */
-			if (read(fd, &ch, 1) < 1)
-				die("read error in search_sl delimiter check\n");
-			if (ch != '|')
-				return -1;
-
-			/* now we are good */
-			close(fd);
-			free(buf);
-			return offset;
-		}
-
-		/* no match: drain line and loop */
-		n = -1;
-		do {
-			n = read(fd, &ch, 1);
-			if (n == 0) { /* EOF */
-				close(fd);
-				free(buf);
-				return -1;
-			}
-			if (n < 0)
-				die("drain line read in search_sl failed\n");
-		} while (ch != '\n');
-	}
-}
-
-int
-cmp_key(int fd, const char *key, const int klen)
-{
-	char ch = 0;
-	for (int i = 0; i < klen; ++i) {
-		if (read(fd, &ch, 1) < 1)
-			die("read error in cmp_key comparison\n");
-		if (ch == '|')
-			return -1; /* search_string > db_string */
-		if (ch != key[i])
-			return (ch - key[i]);
-	}
-
-	/* the key has been matched but we need to forbid partial matches */
-	if (read(fd, &ch, 1) < 1)
-		die("read error in cmp_key delimiter check\n");
-	if (ch != '|')
-		return 1; /* db_string > search_string */
-
-	return 0;
-}
-
-off_t *
-search_db(const char *db_path, const char *key, const int klen)
-{
-	/* this was a PAIN to implement */
-	char ch = 0;
-	
-	int cmp = 1;
-	int cnt = 0;
-	int fd = -1;
-
-	off_t lo_line = 0;
-	off_t hi_line = 0;
-	off_t try = 0;
-	off_t try_line = 0;
-	off_t pos = 0;
-	off_t next = 0;
-	off_t cur = 0;
-	off_t start =0;
-	off_t cand = 0;
-
-	fd = open(db_path, O_RDONLY);
-	if (fd < 0) 
-		die("open db failed in bsearch\n");
-
-	/* go to EOF then scan backwards for line start = "hi" */
-	pos = lseek(fd, 0, SEEK_END);
-	if (pos < 0)
-		die("lseek end failed in bsearch\n");
-	while (ch != '\n' && pos > lo_line) {
-		lseek(fd, pos - 1, SEEK_SET);
-		if (pos < 0)
-			die("lseek end failed in bsearch\n");
-		read(fd, &ch, 1);
-		--pos;
-	}
-	if (!pos)
-		die("no newline in bsearch backward scan of last line\n");
-	hi_line = pos + 1; /* go past \n */
-
-	while (lo_line < hi_line) {
-		/* go up midway */
-		try = lo_line + (hi_line - lo_line) / 2;
-		if (lseek(fd, try, SEEK_SET) < 0)
-			die("lseek try in bsearch failed\n");
-		try_line = try;
-		while (try_line > lo_line) {
-			if (lseek(fd, try_line - 1, SEEK_SET) < 0)
-				die("lseek try_line - 1 in bsearch failed\n");
-			read(fd, &ch, 1);
-			if (ch=='\n') { 
-				/* increment to store offset past the newline */
-				++try_line; 
-				break; 
-			}
-			--try_line;
-		}
-		--try_line; /* one byte too far */
-
-		/* reset back to line start */
-		if (lseek(fd, try_line, SEEK_SET) < 0)
-			die("lseek reset after debug, before cmp failed\n");
-		/* check if we have found key */
-		cmp = cmp_key(fd, key, klen);
-		/* move back to line start */
-		if (lseek(fd, try_line, SEEK_SET) < 0)
-			die("lseek reset after cmp failed\n");
-		if (cmp < 0) {
-			/* search key > db key -> move to next line
-			 * this lets us avoid scanning the same bytes */
-			ch = 0;
-			next = try_line;
-			while (ch != '\n') {
-				ssize_t n = read(fd, &ch, 1);
-				if (n < 0)
-					die("read error moving up in db search\n");
-				if (n == 0) {
-					/* EOF */
-					next = hi_line; 
-					break; 
-				}
-				++next;
-			} 
-			++next; /* move past \n */
-			lo_line = next;
-		} else if (cmp > 0) {
-			/* search key < db key -> move down */
-			hi_line = try_line;
-		} else {
-			/* found one match */
-			pos = try_line;
-			break;
-		}
-
-		/* no movement → not found */
-		if (lo_line >= hi_line) {
-			close(fd);
-			return NULL;
-		}
-	}
-
-	if (cmp != 0) {
-		close(fd);
-		return NULL;
-	}
-
-	/* rewind to first matching line */
-	start = pos;
-	for (;;) {
-		/* 1) find the newline that precedes this line */
-		long scan = start - 1;
-		char c;
-		while (scan > 0) {
-			lseek(fd, scan, SEEK_SET);
-			read(fd, &c, 1);
-			if (c == '\n') break;
-			--scan;
-		}
-		if (scan == 0) break;          /* no more lines above */
-
-		/* 2) find the newline *before* that one */
-		long scan2 = scan - 1;
-		while (scan2 > 0) {
-			lseek(fd, scan2, SEEK_SET);
-			read(fd, &c, 1);
-			if (c == '\n') { scan2++; break; }
-			--scan2;
-		}
-		/* now scan2 is 0 or the start of the previous line */
-		cand = (scan2 == 0 ? 0 : scan2);
-
-		/* if no earlier candidate, we’re done */
-		if (cand >= start) break;
-
-		/* test if that line matches */
-		lseek(fd, cand, SEEK_SET);
-		if (cmp_key(fd, key, klen) == 0) {
-			start = cand;    /* move up to that earlier candidate */
-		} else {
-			break;
-		}
-	}
-
-	/* count matches forward from first */
-	cur = start;
-	for (;;) {
-		/* position at the start of current line */
-		if (lseek(fd, cur, SEEK_SET) < 0)
-			die("lseek count start failed\n");
-
-		/* compare key field */
-		if (cmp_key(fd, key, klen))
-			break; /* all matches found */
-		++cnt;
-
-		/* drain line */
-		ch = 0;
-		while (ch != '\n') {
-			ssize_t n = read(fd, &ch, 1);
-			if (n == 0) 
-				die("EOF read while draining line in match count\n");
-			if (n < 0)
-				die("read failed while draining line in match count\n");
-		}
-
-		next = lseek(fd, 0, SEEK_CUR);
-		if (next <= cur)
-			die("match count loop stuck\n");
-		cur = next;
-	}
-
-	off_t *db_ret = malloc(2 * sizeof(long));
-	if (!db_ret)
-		die("malloc db_ret failed in bsearch\n");
-	db_ret[0] = start;
-	db_ret[1] = cnt;
-
-	close(fd);
-	return db_ret;
-}
-
-void 
-die(const char *fmt, ...) 
-{
-    va_list args;
-    va_start(args, fmt);
-
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, "\n");
-
-    va_end(args);
-    exit(1);
-}
-
-void *err_malloc
-(const char *var, size_t size) 
-{
-    void *ptr = malloc(size);
-    if (!ptr) {
-        fprintf(stderr, "malloc for %s (%zu bytes) failed: \n", var, size);
-        perror("");
-        exit(1);
-    }
-    return ptr;
-}
-
-char*
-build_ccq_path(const char *suffix)
-{
-	char *path = err_malloc("path", path_len);
-
-	int n = snprintf(path, path_len, "%s/%s", CCQ_DATA_DIR, suffix);
-	if (n >= path_len)
-		die("path too long\n");
-
-	return path;
-}
-
-void 
-usage(void) 
-{
-	fprintf(stderr, "usage: ccq -nor <study_list>\n");
-	fprintf(stderr, "       ccq -q <key> -d <database> -s <study_list>\n");
-	exit(1);
-}
-
-void
-handle_signal(int sig)
-{
-	(void)sig;
-	printf("\n\nccq exiting...\n");
-	terminate = true;
-}
-
-
-
-/* ----------------------------- */
-/* FSRS scheduling code. boring! */
-/* ----------------------------- */
+/* FSRS SCHEDULING CODE. boring! */
 
 /* retrievability */
 double retr(double t,double s) { return pow(1.0+F*(t/s),C); }
@@ -1110,25 +809,30 @@ diff(double d,int g)
 	return fmin(fmax(dn,1.0),10.0);
 }
 
-/* main scheduler
-g: 1=again,2=hard,3=good,4=easy
-reps: 0 if first review
-s,d: current stability & difficulty
-elap: days since last review
-rd: desired retention (e.g. 0.9)
-returns interval in seconds (rounded to nearest sec or whole‑day sec)
-*/
-
+/* fsrs scheduler: returns seconds interval to add */
 long
 schedule(int g,int reps,double s,double d,double elap,double rd)
 {
+	/* g
+	 * 	1 = again
+	 * 	3 = good
+	 * 	we don't use the other indices
+	 * reps
+	 * 	numbers of times card has been passed; resets on failure
+	 * s, d
+	 * 	stability and difficulty
+	 * elap
+	 * 	days since last review
+	 * rd
+	 * 	desired retention (0.9)
+	 */
 	if(!reps){s=s0(g);d=d0(g);}
 	double r=retr(elap,s);
 	s=stab(d,s,r,g);
 	d=diff(d,g);
-	double next=interval(rd,s);          /* days   */
-	double sec=next*86400.0;             /* exact  */
-	double sec_day=ceil(next)*86400.0;   /* whole‑day */
-	return ( fabs(sec-elap*86400.0) < fabs(sec_day-elap*86400.0) ) 
-		? sec : sec_day;
+	double next=interval(rd,s);           /* days */
+	double sec=next*86400.0;              /* exact */
+	double sec_day=ceil(next)*86400.0; /* whole‑day */
+	return ( fabs(sec-elap*86400.0) < fabs(sec_day-elap*86400.0) ) ? sec : sec_day;
 }
+
